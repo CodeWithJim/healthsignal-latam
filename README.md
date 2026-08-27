@@ -40,10 +40,10 @@ de ese mismo paciente, y emite una señal cuando varios canales se mueven de for
 sostenida. Cada señal viaja con la lista exacta de registros que la sustentan y con las hipótesis
 alternativas que se evaluaron y descartaron.
 
-**Los documentos que gobiernan el diseño** están en [`Specsclaude/`](Specsclaude/):
-[`constitution.md`](Specsclaude/constitution.md) (nueve principios innegociables),
-[`spec.md`](Specsclaude/spec.md) (requisitos verificables) y
-[`plan.md`](Specsclaude/plan.md) (implementación).
+**Los documentos que gobiernan el diseño** están en [`docs/specs/`](docs/specs/):
+[`constitution.md`](docs/specs/constitution.md) (nueve principios innegociables),
+[`spec.md`](docs/specs/spec.md) (requisitos verificables) y
+[`plan.md`](docs/specs/plan.md) (implementación).
 
 ## 2 · Arquitectura general
 
@@ -67,6 +67,28 @@ API + interfaz     /decide en vivo · /source-row hasta el CSV original
 **La decisión de arquitectura central:** pipeline vectorizado para el movimiento de datos, núcleo
 de dominio aislado para la decisión. La frontera se cruza una sola vez, por paciente y por
 instante.
+
+### Estructura del repositorio
+
+Cada carpeta corresponde a una posición en el diagrama de arriba:
+
+| Carpeta | Papel en la arquitectura |
+|---|---|
+| `src/hs/domain/` | **Núcleo.** `models.py` y `scoring.py`: funciones puras, sin IO ni SQL |
+| `src/hs/timeline/` | **El puerto as-of.** `AsOfStore` — única vía de lectura del núcleo |
+| `src/hs/ingest.py` · `manifest.py` · `schema.sql` | Adaptador de entrada: RAW → CLEAN, hashes y restricciones |
+| `src/hs/detect/` | Caso de uso: recorre la grilla, cruza el puerto, eventiza |
+| `src/hs/export/` · `src/hs/api/` | Adaptadores de salida: CSV de entrega y HTTP |
+| `src/hs/paths.py` | Único lugar donde se resuelven ubicaciones en disco |
+| `config/` | Calibración y adaptadores declarativos. Una fuente nueva es una entrada en YAML |
+| `scripts/` | Entrypoints, uno por etapa del pipeline (`00_ingest` … `06_caso`) |
+| `tests/` · `ui/` | Criterios de aceptación · interfaz sin dependencias |
+| `data/` · `results/` | Entradas y salidas. No se versionan |
+| `reto/` | Material recibido de la organización, intacto. Ver [`reto/README.md`](reto/README.md) |
+| `docs/specs/` | Los documentos que gobiernan el diseño |
+
+La separación que importa es la de las dos últimas filas contra el resto: **lo que construimos
+nosotros y lo que nos dieron no se mezclan en la raíz.**
 
 **La regla temporal es una restricción de base de datos, no una convención.** `observations`
 declara `CHECK (available_time >= event_time)` y `evidence` declara clave foránea contra
@@ -100,7 +122,7 @@ Los 17 CSV de RISA Data V1.0 van en `data/raw/`, conservando la estructura del p
 pesan 244 MB y su integridad se comprueba contra `MANIFEST_SHA256.txt` en cada corrida.
 
 ```bash
-# Etapas 0-2 · RAW → CLEAN                          (~3 min)
+# Etapas 0-2 · RAW → CLEAN                          (~40 s)
 .venv\Scripts\python.exe scripts\00_ingest.py
 
 # Etapas 4-7 · barrido, eventización, export, auditoría   (~6 min)
@@ -109,6 +131,12 @@ pesan 244 MB y su integridad se comprueba contra `MANIFEST_SHA256.txt` en cada c
 # Criterios de aceptación
 .venv\Scripts\python.exe -m pytest tests -q
 ```
+
+La ingesta **descarta y reconstruye** la capa limpia en cada corrida, y con ella las señales
+(`signals`, `evidence` y los CSV de `results/`): son derivadas de esa capa, y sobrevivir a una
+reingesta las convertiría en señales de aspecto normal que ya no corresponden a los datos
+cargados. Hay que volver a correr `02_detect.py` después de cada ingesta. Lo único acumulativo
+es `ingest_manifest`, que es el registro de qué se cargó y cuándo.
 
 ## 5 · Dependencias principales
 
@@ -367,6 +395,17 @@ Verificados sobre RISA Data V1.0 Candidate 1, con los 17 archivos coincidiendo c
 - **Las primeras 54 horas de cada encuentro no se evalúan.** Es lo que hace falta para tener un
   baseline diurno completo, y acortarlo empeora todo (ver la auditoría). Un deterioro que empieza
   en ese tramo se detecta al primer instante evaluable, no antes.
+- **La ingesta reconstruye entera, no carga sólo lo nuevo.** El sistema sí sabe qué filas son
+  nuevas —`manifest.clasificar` devuelve `APENDADO` comparando el hash del prefijo—, pero cargar
+  sólo esas sería incorrecto: `mark_duplicates` desempata cada grupo por `available_time`, y ese
+  campo se lo reescribe a las retransmisiones el paso que lee las ventanas de
+  `connectivity_events.csv`. Agregar filas a ese archivo cambia el `is_duplicate` de filas de
+  `vital_signs` ya cargadas, cuyo propio archivo no se tocó (37 de las 540 retransmisiones caen
+  justo en el borde de una ventana). Lo mismo con `is_plausible`, que es columna guardada contra
+  los límites de `variable_catalog.csv`. Hacerlo incremental exige un grafo de invalidación entre
+  archivos y versionado de reglas, y a cambio ahorraría ~33 s de los 39 que tarda reconstruir todo.
+  A esta escala no compensa, y cuesta el determinismo de P-05: la capa limpia pasaría a depender
+  del historial de ejecuciones y no sólo de los datos.
 - **No hay control de acceso.** La API es local y de sólo lectura; un despliegue real necesitaría
   autenticación y autorización por rol.
 - **Alcance clínico.** El sistema señala situaciones que ameritan revisión. No diagnostica, no

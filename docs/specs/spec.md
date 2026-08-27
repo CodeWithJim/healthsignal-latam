@@ -5,7 +5,7 @@
 | **Versión** | 0.3 |
 | **Fecha** | 2026-08-27 |
 | **Estado** | Implementado. Los ocho criterios de éxito de §8 están medidos en el README |
-| **Reemplaza** | `spec.txt` v0.1 |
+| **Reemplaza** | `docs/legacy/spec_inicial_superado.txt` (v0.1) |
 | **Gobernado por** | [`constitution.md`](constitution.md) v1.0 |
 | **Implementación** | [`plan.md`](plan.md) v0.2 |
 

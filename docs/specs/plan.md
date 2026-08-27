@@ -349,7 +349,7 @@ directamente sobre `master`.
 | Opción | A favor | En contra |
 |---|---|---|
 | **FastAPI + SPA mínima** *(recomendada)* | Menor riesgo; el diferenciador es `/decide`, no el framework; la guía confirma que el frontend no es obligatorio | Menos vistoso |
-| FastAPI + Next.js | Lo que proponía `spec.txt` v0.1 | Horas que se le sacan al motor salvo que alguien lo escriba sin pensarlo |
+| FastAPI + Next.js | Lo que proponía `docs/legacy/spec_inicial_superado.txt` (v0.1) | Horas que se le sacan al motor salvo que alguien lo escriba sin pensarlo |
 | Sólo API + CLI | Válido según la guía | Pierde el timeline con la ventana de evidencia sombreada |
 
 **El endpoint que decide los puntos difíciles (RF-14):**

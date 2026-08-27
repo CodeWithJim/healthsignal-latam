@@ -1,25 +1,27 @@
-# Datos originales de RISA — 244 MB, se distribuyen aparte.
-# La integridad se verifica contra MANIFEST_SHA256.txt en cada corrida.
+# --- Datos ---
+# Los 17 CSV originales de RISA pesan 244 MB y se distribuyen aparte.
+# Su integridad se verifica contra MANIFEST_SHA256.txt en cada corrida.
 data/raw/
 data/*.duckdb
 data/*.duckdb.wal
 
-# Paquete original del reto
-01 - RISA DATA/
+# Paquete original tal como lo entregó la organización (misma masa que data/raw/)
+reto/dataset_original/
 *.zip
 
-# Salidas generadas
+# --- Salidas generadas ---
 results/*.csv
 
-# Python
+# --- Python ---
 __pycache__/
 *.py[cod]
 .pytest_cache/
 .venv/
 venv/
 
-# Editor / SO
+# --- Editor / SO ---
 .vscode/
 .idea/
+.DS_Store
 Thumbs.db
 desktop.ini
