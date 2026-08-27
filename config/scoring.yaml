@@ -1,0 +1,41 @@
+# Constantes de calibración — RNF-05: fuera del código, versionadas.
+#
+# Todo lo marcado (medido) proviene del perfilado de RISA Data V1.0 Candidate 1
+# del 2026-08-26. Si llega una versión congelada distinta, recalibrar es correr
+# un script y editar este archivo, no reescribir el motor.
+
+ventanas:
+  evidencia_horas: 6      # ventana que sustenta la decisión
+  baseline_horas: 48      # referencia propia; termina donde empieza la evidencia
+
+# Intervalo nominal de muestreo (minutos). Permite calcular cobertura como un
+# conteo exacto contra lo esperado, no como estimación (RD-08).
+# (medido) p05 = p50 = p95 en todas las variables periódicas.
+muestreo_nominal_min:
+  HR: 20
+  RR: 20
+  SpO2: 20
+  TEMP: 60
+  SBP: 120
+  DBP: 120
+  WEARABLE_HR: 30
+  STEPS: 30
+  ACTIVITY_LEVEL: 30
+  SIGNAL_QUALITY_INDEX: 720
+
+# Canales fisiológicos y su dirección de deterioro clínico.
+canales:
+  HR:   {direccion: 1,  peso: 1.0}
+  RR:   {direccion: 1,  peso: 1.0}
+  TEMP: {direccion: 1,  peso: 1.0}
+  SpO2: {direccion: -1, peso: 1.0}
+  SBP:  {direccion: -1, peso: 0.5}   # muestreo de 120 min: no aporta tendencia fina
+  DBP:  {direccion: -1, peso: 0.5}
+
+# Pendientes de calibración (NC-02). Se fijan tras la primera corrida completa.
+# Valores de arranque, no definitivos.
+puntaje:
+  techo_por_canal: 6.0
+  concordancia: {1: 0.40, 2: 0.80, 3: 1.15, 4: 1.40}
+  k0: 12.0
+  umbral_canal_concordante: 1.0
