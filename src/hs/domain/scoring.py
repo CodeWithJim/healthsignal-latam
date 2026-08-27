@@ -365,7 +365,13 @@ REGLAS = (_sup_actividad, _sup_calidad, _sup_transitorio, _sup_cobertura)
 
 def _multifuente(snap: PatientSnapshot, t1: dt.datetime,
                  cfg: ScoringConfig) -> tuple[float, tuple[Citation, ...]]:
-    """Laboratorios disponibles en T y fuera de su rango de referencia."""
+    """Laboratorios disponibles en T **y fuera de su rango de referencia**.
+
+    Sólo suma el que aporta información. Un laboratorio normal se cita igual
+    —haberlo mirado también es evidencia— pero no eleva el puntaje: si contara
+    la mera existencia, el bono sería una constante para todo paciente con
+    laboratorios recientes y no corroboraría nada.
+    """
     desde = t1 - dt.timedelta(hours=float(cfg.multifuente["ventana_lab_horas"]))
     aportes, citas = 0, []
     for code in ("LAB_A", "LAB_B", "LAB_C", "LAB_D"):
@@ -373,10 +379,13 @@ def _multifuente(snap: PatientSnapshot, t1: dt.datetime,
         if not len(s):
             continue
         i = int(np.argmax(s.times))
+        anormal = bool(s.fuera_de_rango()[i])
         citas.append(Citation(s.source_files[i], s.record_ids[i], code,
                               s.times[i].astype(dt.datetime),
-                              s.available[i].astype(dt.datetime), "SUPPORTING"))
-        aportes += 1
+                              s.available[i].astype(dt.datetime),
+                              "SUPPORTING" if anormal else "CONTEXT",
+                              1.0 if anormal else 0.0))
+        aportes += int(anormal)
     aportes = min(aportes, int(cfg.multifuente["max_aportes"]))
     return float(cfg.multifuente["lambda"]) * aportes, tuple(citas)
 
@@ -508,7 +517,8 @@ def _explicacion(canales, k, risk, priority, supresiones, ms, confidence, cfg) -
         f"persistencia {c.persistencia:.0%}" for c in vivos[:4])
     partes = [f"{k}/{len(canales)} canales concordantes en {cfg.evidencia_h:.0f} h: {detalle}"]
     if ms > 0:
-        partes.append(f"corroboración de laboratorio disponible ({ms:.0f} marcador/es)")
+        partes.append(f"corroborado por {ms:.0f} marcador/es de laboratorio fuera de "
+                      f"su rango de referencia")
     for s in supresiones:
         if s.fuerza > 0:
             verbo = f"supresión {s.regla}, puntaje reducido {s.fuerza:.0%}"

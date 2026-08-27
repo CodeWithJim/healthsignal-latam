@@ -92,7 +92,7 @@ const fecha = s => String(s ?? '').replace('T', ' ').slice(0, 16);
 let filtro = null, sel = null;
 
 fetch('/health').then(r => r.json()).then(h => {
-  $('#ver').textContent = `${h.señales} señales · ${h.model_version}`;
+  $('#ver').textContent = `${h.signals} señales · ${h.model_version}`;
 });
 
 ['TODAS','CRITICAL','HIGH','MEDIUM','LOW'].forEach(p => {
@@ -121,7 +121,7 @@ async function ver(id){
   [...document.querySelectorAll('.row')].forEach(r =>
     r.classList.toggle('sel', r.dataset.id === id));
   const d = await (await fetch('/signals/' + id)).json();
-  const s = d.señal;
+  const s = d.signal;
   const ev = await (await fetch(`/decide?patient=${s.patient_id}&at=${encodeURIComponent(
     String(s.decision_datetime).replace(' ', 'T'))}`)).json();
   pintar(ev, d.evidencia);

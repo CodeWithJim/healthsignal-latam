@@ -77,7 +77,9 @@ def _dicts(sql: str, params: list | None = None) -> list[dict]:
 def health() -> dict:
     n = _q("SELECT count(*) FROM signals")[0][0]
     obs = _q("SELECT count(*) FROM observations")[0][0]
-    return {"ok": True, "señales": n, "observaciones": obs,
+    # Claves en ASCII: acentos en nombres de campo son legales pero frágiles
+    # para clientes que no negocien la codificación correctamente.
+    return {"ok": True, "signals": n, "observations": obs,
             "model_version": _estado["cfg"].model_version}
 
 
@@ -123,7 +125,7 @@ def ver_señal(sid: str) -> dict:
     por_rol: dict[str, list] = {}
     for e in ev:
         por_rol.setdefault(e["evidence_role"], []).append(e)
-    return {"señal": s[0], "evidencia": por_rol, "total_evidencia": len(ev)}
+    return {"signal": s[0], "evidencia": por_rol, "total_evidencia": len(ev)}
 
 
 # --------------------------------------------------------------------------- pacientes
@@ -133,7 +135,7 @@ def listar_pacientes(limit: int = Query(50, ge=1, le=1000)) -> list[dict]:
     return _dicts("""
         SELECT p.patient_id, p.age_years, p.sex_at_birth, p.care_program, p.region_type,
                p.baseline_risk_profile,
-               (SELECT count(*) FROM signals s WHERE s.patient_id = p.patient_id) AS señales,
+               (SELECT count(*) FROM signals s WHERE s.patient_id = p.patient_id) AS n_signals,
                (SELECT max(risk_score) FROM signals s WHERE s.patient_id = p.patient_id) AS riesgo_max
         FROM patients p ORDER BY riesgo_max DESC NULLS LAST, p.patient_id LIMIT ?
     """, [limit])

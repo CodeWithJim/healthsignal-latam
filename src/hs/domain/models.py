@@ -40,6 +40,11 @@ class Series:
     source_files: tuple[str, ...]
     plausible: np.ndarray                # bool — gate propio (RD-06)
     unit: str | None = None
+    # Rango de referencia por muestra. Sólo los laboratorios lo traen; en el
+    # resto es NaN. Sin esto no se puede distinguir un resultado fuera de rango
+    # de uno normal, y la corroboración multifuente pierde sentido.
+    ref_low: np.ndarray | None = None
+    ref_high: np.ndarray | None = None
 
     def __len__(self) -> int:
         return int(self.times.size)
@@ -53,7 +58,16 @@ class Series:
             self.variable_code, self.times[idx], self.available[idx], self.values[idx],
             tuple(self.texts[i] for i in idx), tuple(self.record_ids[i] for i in idx),
             tuple(self.source_files[i] for i in idx), self.plausible[idx], self.unit,
+            None if self.ref_low is None else self.ref_low[idx],
+            None if self.ref_high is None else self.ref_high[idx],
         )
+
+    def fuera_de_rango(self) -> np.ndarray:
+        """Máscara de muestras fuera de su rango de referencia declarado."""
+        if self.ref_low is None or self.ref_high is None or not len(self):
+            return np.zeros(len(self), dtype=bool)
+        con_rango = ~np.isnan(self.ref_low) & ~np.isnan(self.ref_high)
+        return con_rango & ((self.values < self.ref_low) | (self.values > self.ref_high))
 
     def contiguo(self, lo: int, hi: int) -> "Series":
         """Rebanada contigua [lo, hi). O(k) en vez de O(n): las tuplas se cortan."""
@@ -61,6 +75,8 @@ class Series:
             self.variable_code, self.times[lo:hi], self.available[lo:hi],
             self.values[lo:hi], self.texts[lo:hi], self.record_ids[lo:hi],
             self.source_files[lo:hi], self.plausible[lo:hi], self.unit,
+            None if self.ref_low is None else self.ref_low[lo:hi],
+            None if self.ref_high is None else self.ref_high[lo:hi],
         )
 
     def rango_por_evento(self, t0: dt.datetime, t1: dt.datetime) -> "Series":

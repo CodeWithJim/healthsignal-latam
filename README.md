@@ -13,10 +13,10 @@ profesional.
 
 | | |
 |---|---|
-| **Resultado** | 264 señales sobre 220 pacientes · 4.342 filas de evidencia |
+| **Resultado** | 210 señales sobre 172 pacientes · 3.405 filas de evidencia |
 | **Validador oficial** | `VALID SUBMISSION FORMAT` · 0 errores · 0 warnings |
-| **Causalidad temporal** | 0 violaciones en 4.342 filas de evidencia |
-| **Anticipación** | mediana 3,8 h antes del máximo posterior |
+| **Causalidad temporal** | 0 violaciones en 3.405 filas de evidencia |
+| **Anticipación** | mediana 4,0 h antes del máximo posterior |
 | **Código** | 3.199 líneas de Python · 27 archivos · 64 pruebas |
 
 ---
@@ -228,23 +228,29 @@ emite señal ante el **primer ingreso a una banda o un escalamiento**, con perí
 
 ## 8 · Resultados y métricas
 
-Corrida completa: **95.731 evaluaciones sobre 1.000 pacientes en 6,2 minutos.**
+Corrida completa: **95.731 evaluaciones sobre 1.000 pacientes en 6,1 minutos.**
 
 ```
-264 señales · 220 pacientes · 4.342 filas de evidencia (16,4 por señal)
+210 señales · 172 pacientes · 3.405 filas de evidencia (16,2 por señal)
 
-CRITICAL   24        HIGH   36        MEDIUM  197        LOW    7
+CRITICAL   23        HIGH   33        MEDIUM  149        LOW    5
 ```
 
 | Criterio | Objetivo | Resultado |
 |---|---|---|
-| Causalidad temporal | 100 % | **0 violaciones** en 4.342 filas |
+| Causalidad temporal | 100 % | **0 violaciones** en 3.405 filas |
 | Cobertura de evidencia | 100 % | **0 señales sin evidencia**, 0 huérfanas |
 | Validador oficial | 0 errores | **VALID SUBMISSION FORMAT**, 0 warnings |
-| Impacto en distractores | ≈ 0 | **0,0 %** (0 de 60 señales HIGH+) |
-| Anticipación | > 2 h | **mediana 3,8 h** (p25 1,0 · p75 10,4) |
-| Integración multifuente | ≥ 1 | **115 señales** con 3 fuentes distintas |
-| Volumen | 10²–10³ | **264 señales** |
+| Impacto en distractores | ≈ 0 | **0,0 %** (0 de 56 señales HIGH+) |
+| Anticipación | > 2 h | **mediana 4,0 h** (p25 1,0 · p75 10,8) |
+| Integración multifuente | ≥ 1 | **35 señales** con 3 fuentes distintas |
+| Volumen | 10²–10³ | **210 señales** |
+
+**Corroboración de laboratorio: 18 señales.** Sólo 52 de los 4.593 resultados de laboratorio de
+RISA están fuera de su rango de referencia (1,1 %), así que la corroboración multifuente es rara
+por construcción. Los laboratorios normales se citan igual —haberlos mirado también es evidencia—
+pero con rol `CONTEXT` y contribución cero: si contara la mera existencia de un laboratorio, el
+bono sería una constante para todo paciente con resultados recientes y no corroboraría nada.
 
 Las auditorías corren sobre los CSV exportados, no sobre el motor que los produjo. Ninguna señal
 cita un `record_id` inexistente.

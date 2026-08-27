@@ -22,7 +22,8 @@ DEFAULT_LOOKBACK = dt.timedelta(hours=54)   # baseline 48h + evidencia 6h
 
 _OBS_SQL = """
     SELECT variable_code, event_time, available_time, value_num, value_text,
-           record_id, source_file, is_plausible, is_duplicate, unit_canonical
+           record_id, source_file, is_plausible, is_duplicate, unit_canonical,
+           ref_low, ref_high
     FROM observations
     WHERE patient_id = ?
     ORDER BY variable_code, event_time
@@ -187,11 +188,12 @@ def _build_series(rows) -> tuple[dict[str, Series], tuple[ExcludedRow, ...]]:
     """
     buckets: dict[str, list] = {}
     excluded: list[ExcludedRow] = []
-    for (code, et, av, vnum, vtext, rid, sf, plaus, dup, unit) in rows:
+    for (code, et, av, vnum, vtext, rid, sf, plaus, dup, unit, rlo, rhi) in rows:
         if dup:
             excluded.append(ExcludedRow(sf, rid, code, et, av, "DUPLICATE"))
             continue
-        buckets.setdefault(code, []).append((et, av, vnum, vtext, rid, sf, plaus, unit))
+        buckets.setdefault(code, []).append(
+            (et, av, vnum, vtext, rid, sf, plaus, unit, rlo, rhi))
 
     series: dict[str, Series] = {}
     for code, items in buckets.items():
@@ -200,23 +202,30 @@ def _build_series(rows) -> tuple[dict[str, Series], tuple[ExcludedRow, ...]]:
         avail = np.empty(n, dtype=DT64)
         vals = np.empty(n, dtype=float)
         plaus = np.empty(n, dtype=bool)
+        rlo_a = np.empty(n, dtype=float)
+        rhi_a = np.empty(n, dtype=float)
         texts: list[str | None] = []
         rids: list[str] = []
         sfs: list[str] = []
         unit = None
-        for i, (et, av, vnum, vtext, rid, sf, pl, un) in enumerate(items):
+        for i, (et, av, vnum, vtext, rid, sf, pl, un, rlo, rhi) in enumerate(items):
             times[i] = np.datetime64(et, "us")
             avail[i] = np.datetime64(av, "us")
             vals[i] = np.nan if vnum is None else float(vnum)
             plaus[i] = bool(pl)
+            rlo_a[i] = np.nan if rlo is None else float(rlo)
+            rhi_a[i] = np.nan if rhi is None else float(rhi)
             texts.append(vtext)
             rids.append(rid)
             sfs.append(sf)
             unit = unit or un
         order = np.argsort(times, kind="stable")
+        tiene_rango = not bool(np.isnan(rlo_a).all())
         series[code] = Series(
             code, times[order], avail[order], vals[order],
             tuple(texts[i] for i in order), tuple(rids[i] for i in order),
             tuple(sfs[i] for i in order), plaus[order], unit,
+            rlo_a[order] if tiene_rango else None,
+            rhi_a[order] if tiene_rango else None,
         )
     return series, tuple(excluded)
