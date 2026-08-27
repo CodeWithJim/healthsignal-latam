@@ -22,10 +22,11 @@ from . import paths
 _LINE = re.compile(r"^(?P<path>\S+)\s*\|\s*(?P<bytes>\d+)\s*\|\s*(?P<sha>[0-9a-f]{64})\s*$")
 
 # Veredicto de una fuente respecto de la última ingesta registrada.
-IDENTICO = "IDENTICO"        # mismos bytes, mismo contenido
-APENDADO = "APENDADO"        # creció y el prefijo quedó intacto: información nueva
-MODIFICADO = "MODIFICADO"    # el prefijo cambió: se editó algo ya procesado
-NUEVO = "NUEVO"              # no hay ingesta previa de esta fuente
+IDENTICO = "IDENTICO"            # mismos bytes, mismo contenido
+APENDADO = "APENDADO"            # creció y el prefijo quedó intacto: información nueva
+NUEVA_VERSION = "NUEVA_VERSION"  # cambió por completo, pero coincide con el manifiesto oficial
+MODIFICADO = "MODIFICADO"        # el prefijo cambió y nadie lo respalda: se editó algo procesado
+NUEVO = "NUEVO"                  # no hay ingesta previa de esta fuente
 
 
 class IntegrityError(RuntimeError):
@@ -66,17 +67,26 @@ def sha256(path: Path, hasta: int | None = None) -> str:
 
 
 def clasificar(path: Path, actual_sha: str, actual_bytes: int,
-               previo: tuple[int, str] | None) -> str:
-    """Compara una fuente contra el estado con el que se la ingestó por última vez."""
+               previo: tuple[int, str] | None, sha_oficial: str | None = None) -> str:
+    """Compara una fuente contra el estado con el que se la ingestó por última vez.
+
+    El manifiesto oficial es la autoridad externa. Si el contenido cambió por
+    completo pero coincide con lo que la organización declara, es una entrega
+    nueva —no una edición— por más que no se parezca a lo que teníamos. Sin esa
+    distinción, publicar la versión congelada del dataset detendría el sistema
+    como si alguien hubiera manipulado los archivos.
+    """
     if previo is None:
         return NUEVO
     bytes_previos, sha_previo = previo
-    if actual_bytes == bytes_previos:
-        return IDENTICO if actual_sha == sha_previo else MODIFICADO
-    if actual_bytes < bytes_previos:
-        return MODIFICADO                       # se acortó: se borró algo
-    # Creció. Es información nueva sólo si lo anterior quedó igual.
-    return APENDADO if sha256(path, bytes_previos) == sha_previo else MODIFICADO
+
+    if actual_bytes == bytes_previos and actual_sha == sha_previo:
+        return IDENTICO
+    if actual_bytes > bytes_previos and sha256(path, bytes_previos) == sha_previo:
+        return APENDADO
+    if sha_oficial is not None and actual_sha == sha_oficial:
+        return NUEVA_VERSION
+    return MODIFICADO
 
 
 def verify(source_files: list[str], previo: dict[str, tuple[int, str]] | None = None,
@@ -100,7 +110,7 @@ def verify(source_files: list[str], previo: dict[str, tuple[int, str]] | None = 
         actual = sha256(p)
         n = p.stat().st_size
         e = exp.get(sf)
-        estado = clasificar(p, actual, n, previo.get(sf))
+        estado = clasificar(p, actual, n, previo.get(sf), None if e is None else e[1])
         report[sf] = {
             "sha256": actual,
             "sha256_expected": None if e is None else e[1],
