@@ -106,6 +106,85 @@ def test_evidencia_huerfana_imposible(tmp_path):
         c.close()
 
 
+def test_reconstruir_deja_las_tablas_vacias_y_con_sus_restricciones(tmp_path):
+    """La reconstrucción usa DROP, no DELETE: hay que probar que el contrato vuelve.
+
+    DELETE conserva la tabla y con ella sus CHECK y su clave foránea. DROP las
+    destruye, y lo único que las repone es volver a aplicar el esquema. Si esa
+    parte fallara en silencio, la base seguiría aceptando escrituras — sin el
+    CHECK que hace estructural a P-02 ni la clave foránea que hace imposible la
+    evidencia huérfana. Por eso esta prueba mira las dos cosas: que las tablas
+    queden vacías, y que sigan rechazando lo que deben rechazar.
+    """
+    c = ingest.connect(tmp_path / "reconstruir.duckdb")
+    try:
+        c.execute("""
+            INSERT INTO observations VALUES
+            ('x.csv','R1','PAT-0001',NULL,NULL,'HR','VITAL',
+             TIMESTAMP '2026-07-10 09:00:00', TIMESTAMP '2026-07-10 09:00:00',
+             70.0,NULL,70.0,'bpm','bpm',NULL,NULL,TRUE,FALSE,NULL,NULL,TRUE)
+        """)
+        assert one(c, "SELECT count(*) FROM observations") == 1
+
+        ingest.reconstruir_tablas(c)
+
+        for t in ingest.RESULT_TABLES + ingest.CLEAN_TABLES:
+            assert one(c, f"SELECT count(*) FROM {t}") == 0, t
+
+        # el CHECK temporal volvió con la tabla
+        with pytest.raises(duckdb.ConstraintException):
+            c.execute("""
+                INSERT INTO observations VALUES
+                ('x.csv','R2','PAT-0001',NULL,NULL,'HR','VITAL',
+                 TIMESTAMP '2026-07-10 10:00:00', TIMESTAMP '2026-07-10 09:00:00',
+                 70.0,NULL,70.0,'bpm','bpm',NULL,NULL,TRUE,FALSE,NULL,NULL,TRUE)
+            """)
+        # y la clave foránea de evidence contra signals también
+        with pytest.raises(duckdb.ConstraintException):
+            c.execute("""
+                INSERT INTO evidence VALUES
+                ('NO-EXISTE','03_monitoring/vital_signs.csv','OBS-1','HR',
+                 TIMESTAMP '2026-07-10 09:00:00', TIMESTAMP '2026-07-10 09:00:00',
+                 'PRIMARY', 1.0)
+            """)
+    finally:
+        c.close()
+
+
+def test_el_registro_de_ingestas_sobrevive_a_la_reconstruccion(tmp_path):
+    """`ingest_manifest` es acumulativo: es lo que permite comparar corridas."""
+    c = ingest.connect(tmp_path / "manifiesto.duckdb")
+    try:
+        c.execute("""
+            INSERT INTO ingest_manifest
+                (run_id, source_file, sha256, sha256_expected, sha256_ok, bytes,
+                 rows_read, rows_loaded, rows_quarantined, target_table, ingested_at, estado)
+            VALUES ('ing-viejo','x.csv','aa','aa',TRUE,10,1,1,0,'observations',
+                    TIMESTAMP '2026-07-10 09:00:00','NUEVO')
+        """)
+        ingest.reconstruir_tablas(c)
+        assert one(c, "SELECT count(*) FROM ingest_manifest") == 1
+    finally:
+        c.close()
+
+
+def test_descartar_exportaciones_borra_los_csv_de_salida(tmp_path):
+    """Los CSV exportados son derivados de la capa limpia: se van con ella."""
+    (tmp_path / "signals.csv").write_text("signal_id\n", encoding="utf-8")
+    (tmp_path / "evidence.csv").write_text("signal_id\n", encoding="utf-8")
+    ajeno = tmp_path / "notas.txt"
+    ajeno.write_text("no es una salida", encoding="utf-8")
+
+    borrados = ingest.descartar_exportaciones(tmp_path)
+
+    assert sorted(borrados) == ["evidence.csv", "signals.csv"]
+    assert not (tmp_path / "signals.csv").exists()
+    assert not (tmp_path / "evidence.csv").exists()
+    assert ajeno.exists(), "sólo se borran las salidas conocidas"
+
+    assert ingest.descartar_exportaciones(tmp_path) == []   # idempotente
+
+
 def test_latencias_por_dominio_coinciden_con_lo_medido(con):
     """RD-02: las reglas oficiales de disponibilidad producen estas latencias."""
     lag = dict(con.execute("""
@@ -196,6 +275,28 @@ def test_una_retransmision_sin_ventana_no_pasa_con_su_timestamp(con):
     assert sin_respaldo == 0, (
         f"{sin_respaldo} retransmisión(es) conservan available_time = timestamp sin una "
         f"ventana de conectividad que lo justifique")
+
+
+def test_una_version_nueva_del_dataset_no_se_confunde_con_manipulacion(tmp_path):
+    """El manifiesto oficial es la autoridad: si el contenido coincide con él,
+    es una entrega nueva aunque no se parezca a lo que ingestamos antes."""
+    from hs import manifest as m
+
+    archivo = tmp_path / "fuente.csv"
+    archivo.write_text("id,valor\nA,1\n", encoding="utf-8")
+    previo = (archivo.stat().st_size, m.sha256(archivo))
+
+    # llega contenido completamente distinto
+    archivo.write_text("id,valor\nZ,99\nY,98\n", encoding="utf-8")
+    nuevo_sha = m.sha256(archivo)
+    n = archivo.stat().st_size
+
+    # sin respaldo del manifiesto -> manipulación
+    assert m.clasificar(archivo, nuevo_sha, n, previo, None) == m.MODIFICADO
+    # el manifiesto viejo tampoco lo respalda
+    assert m.clasificar(archivo, nuevo_sha, n, previo, previo[1]) == m.MODIFICADO
+    # con el manifiesto actualizado -> entrega nueva, no manipulación
+    assert m.clasificar(archivo, nuevo_sha, n, previo, nuevo_sha) == m.NUEVA_VERSION
 
 
 def test_el_mecanismo_de_disponibilidad_incierta_funciona(tmp_path):

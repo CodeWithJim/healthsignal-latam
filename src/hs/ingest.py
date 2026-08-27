@@ -31,6 +31,12 @@ QUARANTINE_REASONS = (
 # dos ingestas, que es la pregunta que el hash existe para contestar.
 CLEAN_TABLES = ("observations", "intervals", "clinical_facts", "quarantine")
 
+# Las salidas también se descartan: quedaron calculadas sobre la capa limpia
+# anterior, y dejarlas junto a una capa reconstruida es la forma más fácil de
+# entregar señales que no corresponden a los datos. `evidence` va primero por su
+# clave foránea contra `signals`.
+RESULT_TABLES = ("evidence", "signals")
+
 
 # --------------------------------------------------------------------------- helpers
 
@@ -324,6 +330,39 @@ def mark_duplicates(con) -> int:
     """).fetchone()[0]
 
 
+def reconstruir_tablas(con) -> None:
+    """Descarta la capa limpia y las salidas, y las vuelve a crear vacías.
+
+    Se hace con DROP y no con DELETE. Medido sobre 2.536.442 filas el
+    2026-08-27: `DELETE FROM` tarda 127 s y `DROP` + recrear desde el esquema
+    tarda 0,0 s — el 75 % del tiempo de la corrida se iba vaciando tablas que
+    se vuelven a llenar enseguida.
+
+    Recrear desde `schema.sql` devuelve las tablas con sus CHECK y su clave
+    foránea intactos; hay pruebas que intentan violarlos y esperan la excepción.
+    """
+    for t in RESULT_TABLES + CLEAN_TABLES:
+        con.execute(f"DROP TABLE IF EXISTS {t}")
+    con.execute(paths.SCHEMA_SQL.read_text(encoding="utf-8"))
+
+
+def descartar_exportaciones(destino=None) -> list[str]:
+    """Borra results/*.csv: se calcularon sobre la capa limpia anterior.
+
+    Dejarlos junto a una capa reconstruida es la forma más fácil de entregar
+    señales que no corresponden a los datos cargados. Se regeneran con
+    scripts/02_detect.py.
+    """
+    destino = destino or paths.RESULTS
+    borrados = []
+    for nombre in ("signals.csv", "evidence.csv"):
+        p = destino / nombre
+        if p.exists():
+            p.unlink()
+            borrados.append(nombre)
+    return borrados
+
+
 def estado_previo(con) -> dict[str, tuple[int, str]]:
     """Con qué bytes y qué hash se ingestó cada fuente la última vez.
 
@@ -411,6 +450,14 @@ def run(con=None, verbose: bool = True) -> dict[str, Any]:
             log(f"  INFORMACIÓN NUEVA en {sf}: +{crecio:,} bytes, "
                 f"lo anterior intacto — se procesa")
 
+        versiones = por_estado.get(manifest.NUEVA_VERSION, [])
+        if versiones:
+            log(f"  VERSIÓN NUEVA en {len(versiones)} fuente(s): el contenido cambió por")
+            log("    completo pero coincide con MANIFEST_SHA256.txt, así que es una entrega")
+            log("    nueva de la organización y no una edición. Se procesa.")
+            for sf in versiones[:5]:
+                log(f"      {sf}")
+
         alteradas = por_estado.get(manifest.MODIFICADO, [])
         if alteradas:
             log("\n  Se editó contenido que este sistema ya había procesado. No es")
@@ -428,8 +475,10 @@ def run(con=None, verbose: bool = True) -> dict[str, Any]:
             raise manifest.IntegrityError(
                 "No coinciden con MANIFEST_SHA256.txt: " + ", ".join(sospechosas))
 
-        for t in CLEAN_TABLES:
-            con.execute(f"DELETE FROM {t}")
+        reconstruir_tablas(con)
+        borrados = descartar_exportaciones()
+        log(f"Capa CLEAN y salidas reconstruidas"
+            + (f"; descartado results/{', results/'.join(borrados)}" if borrados else ""))
 
         log("Cargando catálogos y dimensiones ...")
         rows_read = load_catalogs_and_dimensions(con, cfg)

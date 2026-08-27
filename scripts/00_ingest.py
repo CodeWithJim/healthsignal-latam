@@ -153,6 +153,14 @@ def main() -> int:
     r = con.execute("SELECT min(start_time), max(end_time) FROM intervals").fetchone()
     print(f"  intervalos:    {r[0]}  ->  {r[1]}")
 
+    rule("SALIDAS")
+    ns = con.execute("SELECT count(*) FROM signals").fetchone()[0]
+    ne = con.execute("SELECT count(*) FROM evidence").fetchone()[0]
+    print(f"  signals: {ns}   evidence: {ne}   results/: "
+          f"{'vacío' if not (paths.RESULTS / 'signals.csv').exists() else 'presente'}")
+    print("  Las señales anteriores se descartaron: correspondían a la capa limpia previa.")
+    print("  Regenerarlas con  scripts/02_detect.py")
+
     print(f"\n{'=' * 78}\nOK — capa CLEAN construida en {time.time() - t0:.1f} s")
     print(f"almacén: {paths.WAREHOUSE}")
     con.close()
