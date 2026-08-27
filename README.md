@@ -68,10 +68,30 @@ por pruebas que intentan violarlas.
 | Fase | Estado |
 |---|---|
 | **0 · RAW → CLEAN** | Completa. 17/17 hashes verificados, 2.549.046 filas clasificadas |
-| **1 · AsOfStore** | Completa. Puerto as-of, objetos de dominio y 29 pruebas en verde |
-| 2 · Motor de concordancia | Pendiente |
+| **1 · AsOfStore** | Completa. Puerto as-of y objetos de dominio |
+| **2 · Motor de concordancia** | Analizador validado contra CA-01…CA-06. 43 pruebas en verde. Falta la corrida sobre datos reales y la exportación |
 | 3 · Supresión, métricas, interfaz | Pendiente |
 | 4 · Decisión en vivo y entregables | Pendiente |
+
+## Concordancia sobre magnitud, en números
+
+Resultado del analizador sobre las trayectorias sintéticas de aceptación, con la
+trayectoria del documento oficial (08:00 HR 88 SpO2 95 RR 18 T 37,1 → 11:00 HR 108
+SpO2 91 RR 25 T 38,0):
+
+| Caso | k | Riesgo | Prioridad |
+|---|---|---|---|
+| Deterioro concordante, evaluado a las 10:00 | 4 | **0,780** | HIGH |
+| Deterioro concordante, evaluado a las 11:00 | 4 | 0,922 | CRITICAL |
+| **Un solo canal a +8,4 desviaciones sostenidas** | 1 | **0,183** | LOW |
+| Pico de HR con contexto de actividad | 1 | 0,039 | LOW · supresión citada |
+| Caída aislada de SpO2 a 71 % | 0 | 0,000 | LOW |
+| Ruido plano | 0 | 0,000 | LOW |
+
+Cuatro canales moviéndose moderadamente juntos puntúan **4,3 veces más** que uno
+solo desviado al extremo. Eso no es un ajuste de umbrales: el recorte por canal
+antes de agregar hace que la concordancia pese más que la magnitud por
+construcción (principio P-07).
 
 ## Hallazgos que condicionan el diseño
 

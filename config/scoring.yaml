@@ -32,10 +32,64 @@ canales:
   SBP:  {direccion: -1, peso: 0.5}   # muestreo de 120 min: no aporta tendencia fina
   DBP:  {direccion: -1, peso: 0.5}
 
+# Piso de dispersión por canal (NC-05, resuelto).
+# p05 de la distribución poblacional de MAD sobre ventanas diarias (medido).
+# Sin piso, un paciente muy estable (MAD ~ 0) produciría desviaciones infinitas.
+piso_dispersion:
+  HR: 2.82
+  RR: 0.70
+  SpO2: 0.34
+  TEMP: 0.12
+  SBP: 2.36
+  DBP: 1.63
+
+# Mínimos de participación. Un canal que no los alcanza NO participa del
+# dictamen: no se le asigna valor por defecto ni se lo trata como normal (RF-05).
+minimos:
+  cobertura_baseline: 0.25       # fracción de las muestras nominales esperadas
+  cobertura_evidencia: 0.40
+  muestras_evidencia: 3
+  muestras_para_pendiente: 5     # con menos puntos la pendiente es ruido
+
 # Pendientes de calibración (NC-02). Se fijan tras la primera corrida completa.
-# Valores de arranque, no definitivos.
 puntaje:
   techo_por_canal: 6.0
   concordancia: {1: 0.40, 2: 0.80, 3: 1.15, 4: 1.40}
   k0: 12.0
   umbral_canal_concordante: 1.0
+  peso_nivel: 0.5
+  peso_pendiente: 0.5
+  # Persistencia = racha consecutiva más larga por encima del umbral, sobre el
+  # objetivo. Medida como racha y no como fracción de la ventana: una señal
+  # temprana ocupa poco de 6 h y la fracción la castigaría justo cuando más
+  # vale detectarla. Un artefacto de una muestra queda en racha 1 igual.
+  umbral_persistencia: 0.5
+  racha_objetivo_min: 60       # se traduce a muestras con la grilla de cada canal
+
+multifuente:
+  lambda: 1.0
+  ventana_lab_horas: 24
+  max_aportes: 2
+
+# Cada regla emite su propia fila de evidencia con el record_id que la
+# justifica: no se baja un puntaje en silencio (P-04, RF-08).
+supresion:
+  actividad:   {fuerza: 0.70, dominancia_hr: 0.55}
+  calidad:     {fuerza: 0.90, fraccion: 0.30}
+  transitorio: {fuerza: 0.80, persistencia_min: 0.50}   # racha de 1 muestra o menos
+  cobertura:   {umbral: 0.50}
+
+# Compuertas duras, no cortes del puntaje (RF-10, P-07).
+prioridad:
+  CRITICAL: {risk: 0.85, k: 3, persistencia: 0.60, cobertura: 0.70}
+  HIGH:     {risk: 0.65, k: 2}
+  MEDIUM:   {risk: 0.40}
+
+confianza:
+  tau_frescura_min: 120.0
+
+# La cobertura NO multiplica el puntaje de riesgo. Un paciente que se desconecta
+# no está menos grave por estar desconectado: está peor observado. La cobertura
+# decide si un canal participa y alimenta confidence_score (P-06, RF-09).
+
+model_version: hs-concordancia-0.2.0
