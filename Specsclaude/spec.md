@@ -2,9 +2,9 @@
 
 | | |
 |---|---|
-| **Versión** | 0.2 |
-| **Fecha** | 2026-08-26 |
-| **Estado** | Borrador para revisión |
+| **Versión** | 0.3 |
+| **Fecha** | 2026-08-27 |
+| **Estado** | Implementado. Los ocho criterios de éxito de §8 están medidos en el README |
 | **Reemplaza** | `spec.txt` v0.1 |
 | **Gobernado por** | [`constitution.md`](constitution.md) v1.0 |
 | **Implementación** | [`plan.md`](plan.md) v0.2 |
@@ -408,14 +408,14 @@ entrada del motor a la etapa de datos reales.
 Marcadores `[NEEDS CLARIFICATION]` que deben resolverse antes de cerrar la versión 1.0. Ninguno
 bloquea el inicio de la implementación.
 
-| ID | Pendiente | Cómo se resuelve |
+| ID | Pendiente | Estado al 2026-08-27 |
 |---|---|---|
-| **NC-01** | Cadencia exacta de evaluación | Propuesta: horaria dentro del encuentro (≈144.000 evaluaciones). Se confirma midiendo el tiempo real de corrida contra RNF-03 |
-| **NC-02** | Constantes de calibración: techo por canal, multiplicadores de concordancia, `k₀`, bandas de prioridad, pisos de dispersión | Se fijan tras la primera corrida completa, contra la distribución observada. *Referencia de la sonda: mediana 4,28 · p95 16,80 · máximo ≈ 27,3* |
-| **NC-03** | Volumen objetivo dentro del rango de CE-08 | Decisión del equipo tras ver la primera distribución de scores |
-| **NC-04** | Ventana de oportunidad para CE-05 | Definirla y justificarla en el README |
-| **NC-05** | Mínimo de muestras de baseline por canal | Derivar de la grilla nominal de RD-08 y de la distribución de cobertura |
-| **NC-06** | Superficie del mecanismo de exploración de RF-14 | Decisión del equipo. Ver `plan.md` |
+| **NC-01** | Cadencia de evaluación | **Resuelto:** horaria dentro del encuentro. 95.731 evaluaciones en 6,2 min, dentro de RNF-03 |
+| **NC-02** | Constantes de calibración | **Resuelto:** `k₀ = 12`, techo 6,0, `C(k) = 0,40/0,80/1,15/1,40`. Distribución observada de puntaje bruto: p50 0,00 · p90 2,34 · p99 4,36 · p999 13,61 · máx 34,21. Todo en `config/scoring.yaml` |
+| **NC-03** | Volumen objetivo | **Resuelto:** 264 señales, dentro del rango de CE-08 |
+| **NC-04** | Ventana de oportunidad para CE-05 | **Resuelto:** máximo posterior del canal dominante dentro de 24 h. Mediana medida 3,8 h. Documentado en el README |
+| **NC-05** | Piso de dispersión y mínimos de participación | **Resuelto:** piso = p05 de la distribución poblacional de MAD (HR 2,82 · RR 0,70 · SpO2 0,34 · TEMP 0,12 · SBP 2,36 · DBP 1,63). Mínimos como fracción de la grilla nominal |
+| **NC-06** | Superficie de exploración de RF-14 | **Resuelto:** FastAPI + interfaz de una página sin dependencias. La API queda igual si se decide montar otro front encima |
 
 ---
 
