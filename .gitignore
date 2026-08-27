@@ -1,0 +1,25 @@
+# Datos originales de RISA — 244 MB, se distribuyen aparte.
+# La integridad se verifica contra MANIFEST_SHA256.txt en cada corrida.
+data/raw/
+data/*.duckdb
+data/*.duckdb.wal
+
+# Paquete original del reto
+01 - RISA DATA/
+*.zip
+
+# Salidas generadas
+results/*.csv
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# Editor / SO
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini

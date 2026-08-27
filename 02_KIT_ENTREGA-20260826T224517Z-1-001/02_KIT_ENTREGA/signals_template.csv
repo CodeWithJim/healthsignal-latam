@@ -1,0 +1,1 @@
+signal_id,patient_id,decision_datetime,risk_score,priority_level,confidence_score,evidence_start,evidence_end,explanation,model_version
