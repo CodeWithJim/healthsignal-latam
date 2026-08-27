@@ -14,6 +14,7 @@ import duckdb
 import pytest
 
 from hs import ingest, paths
+from hs.timeline import AsOfStore
 
 STUDY_START = dt.datetime(2026, 7, 1, 0, 0, 0)
 STUDY_END = dt.datetime(2026, 7, 31, 8, 0, 0)
@@ -35,12 +36,27 @@ def one(con, sql, *args):
 # --------------------------------------------------------------- integridad
 
 def test_las_17_fuentes_coinciden_con_el_manifiesto(con):
-    """P-08 / RNF-04."""
-    total, ok = con.execute(
-        "SELECT count(*), count(*) FILTER (WHERE sha256_ok) FROM ingest_manifest"
-    ).fetchone()
+    """P-08 / RNF-04. Acotado a la última corrida: el registro es acumulativo."""
+    total, ok = con.execute("""
+        SELECT count(*), count(*) FILTER (WHERE sha256_ok) FROM ingest_manifest
+        WHERE run_id = (SELECT max(run_id) FROM ingest_manifest)
+    """).fetchone()
     assert total == 17, f"se esperaban 17 fuentes, hay {total}"
     assert ok == 17, f"{total - ok} archivos no coinciden con MANIFEST_SHA256.txt"
+
+
+def test_el_registro_de_ingestas_es_acumulativo(con):
+    """Sin historial no se puede saber si una fuente creció o si la editaron."""
+    corridas = con.execute(
+        "SELECT count(DISTINCT run_id) FROM ingest_manifest").fetchone()[0]
+    assert corridas >= 1
+    sin_estado = con.execute(
+        "SELECT count(*) FROM ingest_manifest WHERE estado IS NULL").fetchone()[0]
+    ultima = con.execute("""
+        SELECT count(*) FROM ingest_manifest
+        WHERE run_id = (SELECT max(run_id) FROM ingest_manifest) AND estado IS NOT NULL
+    """).fetchone()[0]
+    assert ultima == 17, "la última corrida debe registrar el veredicto de cada fuente"
 
 
 def test_invariante_de_clasificacion(con):
@@ -48,7 +64,8 @@ def test_invariante_de_clasificacion(con):
     malas = con.execute("""
         SELECT source_file, rows_read, rows_loaded, rows_quarantined
         FROM ingest_manifest
-        WHERE rows_read <> rows_loaded + rows_quarantined
+        WHERE run_id = (SELECT max(run_id) FROM ingest_manifest)
+          AND rows_read <> rows_loaded + rows_quarantined
     """).fetchall()
     assert malas == [], f"leídas != cargadas + cuarentena en: {malas}"
 
@@ -68,7 +85,7 @@ def test_el_check_temporal_esta_activo_en_la_base(tmp_path):
                 INSERT INTO observations VALUES
                 ('x.csv','R1','PAT-0001',NULL,NULL,'HR','VITAL',
                  TIMESTAMP '2026-07-10 10:00:00', TIMESTAMP '2026-07-10 09:00:00',
-                 70.0,NULL,70.0,'bpm','bpm',NULL,NULL,TRUE,FALSE,NULL,NULL)
+                 70.0,NULL,70.0,'bpm','bpm',NULL,NULL,TRUE,FALSE,NULL,NULL,TRUE)
             """)
     finally:
         c.close()
@@ -159,6 +176,93 @@ def test_toda_retransmision_cae_en_una_ventana_de_conectividad(con):
                           WHERE c.kind='CONNECTIVITY' AND c.patient_id = o.patient_id
                             AND o.event_time BETWEEN c.start_time AND c.end_time)
     """) == 0
+
+
+def test_una_retransmision_sin_ventana_no_pasa_con_su_timestamp(con):
+    """Si no se puede acotar cuándo estuvo disponible, no se afirma que sí se pudo.
+
+    En Candidate 1 las 540 están cubiertas, así que la regla no llega a
+    ejercitarse sobre los datos reales. La invariante que sí se comprueba es la
+    que importa: ninguna fila queda con disponibilidad afirmada sin respaldo.
+    """
+    sin_respaldo = one(con, """
+        SELECT count(*) FROM observations o
+        WHERE o.source_system = 'MONITOR_RETRANSMIT'
+          AND coalesce(o.is_availability_known, TRUE)
+          AND NOT EXISTS (SELECT 1 FROM intervals c
+                          WHERE c.kind='CONNECTIVITY' AND c.patient_id = o.patient_id
+                            AND o.event_time BETWEEN c.start_time AND c.end_time)
+    """)
+    assert sin_respaldo == 0, (
+        f"{sin_respaldo} retransmisión(es) conservan available_time = timestamp sin una "
+        f"ventana de conectividad que lo justifique")
+
+
+def test_el_mecanismo_de_disponibilidad_incierta_funciona(tmp_path):
+    """Candidate 1 no lo ejercita, así que se comprueba sobre datos construidos.
+
+    Dos retransmisiones idénticas salvo por una cosa: una cae dentro de un corte
+    de conectividad y la otra no. La primera debe quedar acotada al cierre del
+    corte; la segunda, marcada, porque afirmar que estuvo disponible en su
+    timestamp sería afirmar algo que sabemos falso.
+    """
+    import datetime as _dt
+
+    c = ingest.connect(tmp_path / "sintetico.duckdb")
+    try:
+        base = _dt.datetime(2026, 7, 10, 12, 0, 0)
+        c.execute("""
+            INSERT INTO intervals VALUES
+            ('04_context/connectivity_events.csv','CONN-X','PAT-0001','WRB-1','CONNECTIVITY',
+             'DISCONNECTED','DISCONNECTED', TIMESTAMP '2026-07-10 11:00:00',
+             TIMESTAMP '2026-07-10 14:00:00', TIMESTAMP '2026-07-10 11:00:00', NULL, NULL)
+        """)
+        # CUBIERTA cae dentro del corte 11:00–14:00; HUERFANA a las 18:00, fuera.
+        for rid, t in (("CUBIERTA", base), ("HUERFANA", base + _dt.timedelta(hours=6))):
+            c.execute(
+                "INSERT INTO observations VALUES ('03_monitoring/vital_signs.csv',?,'PAT-0001',"
+                "NULL,NULL,'HR','VITAL',?,?,70.0,NULL,70.0,'bpm','bpm',"
+                "'MONITOR_RETRANSMIT','RETRANSMITTED',TRUE,FALSE,NULL,NULL,TRUE)",
+                [rid, t, t])
+
+        ajustadas, sin_ventana = ingest.resolver_disponibilidad_retransmitidas(c)
+        assert ajustadas == 1, "la cubierta debía acotarse al cierre del corte"
+        assert sin_ventana == 1, "la huérfana debía marcarse"
+
+        cub = c.execute("SELECT available_time, is_availability_known FROM observations "
+                        "WHERE record_id = 'CUBIERTA'").fetchone()
+        assert cub[0] == _dt.datetime(2026, 7, 10, 14, 0, 0), "acotada al cierre"
+        assert cub[1] is True
+
+        hue = c.execute("SELECT available_time, is_availability_known FROM observations "
+                        "WHERE record_id = 'HUERFANA'").fetchone()
+        assert hue[1] is False, "sin ventana que la acote, no se afirma disponibilidad"
+
+        snap = AsOfStore(c).snapshot("PAT-0001", base + _dt.timedelta(hours=12))
+        assert "HUERFANA" not in {r for s in snap.series.values() for r in s.record_ids}
+        assert {x.record_id: x.reason for x in snap.excluded}.get("HUERFANA") == \
+            "AVAILABILITY_UNKNOWN"
+        assert "CUBIERTA" in {r for s in snap.series.values() for r in s.record_ids}
+    finally:
+        c.close()
+
+
+def test_las_filas_con_disponibilidad_incierta_no_llegan_al_motor(con):
+    """No entran a las series, pero siguen en la tabla y son citables."""
+    import datetime as _dt
+
+    from hs.timeline import AsOfStore
+
+    fila = con.execute("""
+        SELECT patient_id, record_id, event_time FROM observations
+        WHERE NOT coalesce(is_availability_known, TRUE) LIMIT 1""").fetchone()
+    if not fila:
+        pytest.skip("Candidate 1 no tiene filas con disponibilidad incierta")
+    pid, rid, et = fila
+    snap = AsOfStore(con).snapshot(pid, et + _dt.timedelta(hours=12))
+    assert rid not in {r for s in snap.series.values() for r in s.record_ids}
+    apartadas = {x.record_id: x.reason for x in snap.excluded}
+    assert apartadas.get(rid) == "AVAILABILITY_UNKNOWN"
 
 
 def test_sin_llaves_duplicadas_entre_filas_utilizables(con):

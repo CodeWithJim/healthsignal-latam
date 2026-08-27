@@ -23,7 +23,7 @@ DEFAULT_LOOKBACK = dt.timedelta(hours=54)   # baseline 48h + evidencia 6h
 _OBS_SQL = """
     SELECT variable_code, event_time, available_time, value_num, value_text,
            record_id, source_file, is_plausible, is_duplicate, unit_canonical,
-           ref_low, ref_high
+           ref_low, ref_high, coalesce(is_availability_known, TRUE)
     FROM observations
     WHERE patient_id = ?
     ORDER BY variable_code, event_time
@@ -191,7 +191,13 @@ def _build_series(rows) -> tuple[dict[str, Series], tuple[ExcludedRow, ...]]:
     """
     buckets: dict[str, list] = {}
     excluded: list[ExcludedRow] = []
-    for (code, et, av, vnum, vtext, rid, sf, plaus, dup, unit, rlo, rhi) in rows:
+    for (code, et, av, vnum, vtext, rid, sf, plaus, dup, unit, rlo, rhi, disp) in rows:
+        if not disp:
+            # No se pudo acotar cuándo estuvo disponible. Incluirla obligaría a
+            # afirmar un available_time indefendible, así que no entra a la
+            # serie; se conserva aparte para poder citarla como QUALITY.
+            excluded.append(ExcludedRow(sf, rid, code, et, av, "AVAILABILITY_UNKNOWN"))
+            continue
         if dup:
             excluded.append(ExcludedRow(sf, rid, code, et, av, "DUPLICATE"))
             continue

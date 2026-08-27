@@ -30,22 +30,30 @@ def main() -> int:
 
     rule("INTEGRIDAD DE ORIGEN")
     rows = con.execute("""
-        SELECT source_file, sha256_ok, bytes, rows_read, rows_loaded, rows_quarantined
-        FROM ingest_manifest ORDER BY source_file
+        SELECT source_file, sha256_ok, bytes, rows_read, rows_loaded, rows_quarantined, estado
+        FROM ingest_manifest
+        WHERE run_id = (SELECT max(run_id) FROM ingest_manifest)
+        ORDER BY source_file
     """).fetchall()
-    print(f"{'archivo':44} {'sha':>4} {'MB':>7} {'leídas':>10} {'cargadas':>10} {'cuarent.':>9}")
-    for sf, ok, b, rd, ld, q in rows:
+    print(f"{'archivo':44} {'sha':>4} {'MB':>7} {'leídas':>10} {'cargadas':>9} "
+          f"{'cuar.':>6} {'vs. anterior':>12}")
+    for sf, ok, b, rd, ld, q, est in rows:
         mark = "ok" if ok else ("--" if ok is None else "DIFF")
-        print(f"{sf:44} {mark:>4} {b/1e6:7.1f} {rd:10,} {ld:10,} {q:9,}")
+        print(f"{sf:44} {mark:>4} {b/1e6:7.1f} {rd:10,} {ld:9,} {q:6,} {est or '':>12}")
 
     n_ok = sum(1 for r in rows if r[1])
     print(f"\n{n_ok}/{len(rows)} archivos coinciden con MANIFEST_SHA256.txt")
+    corridas = con.execute("SELECT count(DISTINCT run_id) FROM ingest_manifest").fetchone()[0]
+    print(f"Registro acumulado: {corridas} corrida(s) de ingesta")
 
     rule("INVARIANTE RF-02  ·  leídas = cargadas + cuarentena")
+    # Acotado a esta corrida: ingest_manifest es acumulativa, y sumar todas las
+    # corridas contaría cada fuente tantas veces como se haya ingestado.
     bad = con.execute("""
         SELECT source_file, rows_read, rows_loaded, rows_quarantined
         FROM ingest_manifest
-        WHERE target_table IN ('observations','intervals','clinical_facts')
+        WHERE run_id = (SELECT max(run_id) FROM ingest_manifest)
+          AND target_table IN ('observations','intervals','clinical_facts')
           AND rows_read <> rows_loaded + rows_quarantined
     """).fetchall()
     if bad:
@@ -55,7 +63,8 @@ def main() -> int:
         tot = con.execute("""
             SELECT sum(rows_read), sum(rows_loaded), sum(rows_quarantined)
             FROM ingest_manifest
-            WHERE target_table IN ('observations','intervals','clinical_facts')
+            WHERE run_id = (SELECT max(run_id) FROM ingest_manifest)
+              AND target_table IN ('observations','intervals','clinical_facts')
         """).fetchone()
         print(f"  se cumple en todas las fuentes: {tot[0]:,} = {tot[1]:,} + {tot[2]:,}")
 
@@ -104,9 +113,14 @@ def main() -> int:
     ).fetchone()[0]
     print(f"\n    total {tot:,}, de las cuales {okf:,} venían marcadas OK en el origen")
 
-    rule("RD-05  ·  retransmisiones y deduplicación")
-    print(f"  disponibilidad ajustada: {info['adjusted']:,} filas")
+    rule("RD-05  ·  retransmisiones, disponibilidad y deduplicación")
+    print(f"  disponibilidad acotada:  {info['adjusted']:,} filas")
+    print(f"  sin ventana que acote:   {info['sin_ventana']:,} filas   "
+          f"{'(ninguna: todas cubiertas)' if not info['sin_ventana'] else '← marcadas'}")
     print(f"  marcadas duplicadas:     {info['duplicates']:,} filas")
+    n_desc = con.execute(
+        "SELECT count(*) FROM observations WHERE NOT is_availability_known").fetchone()[0]
+    print(f"  disponibilidad incierta: {n_desc:,} filas (fuera del cálculo, citables)")
     for r in con.execute("""
         SELECT source_system, quality_flag, count(*), count(DISTINCT patient_id)
         FROM observations WHERE is_duplicate GROUP BY 1,2

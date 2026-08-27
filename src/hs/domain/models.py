@@ -209,7 +209,9 @@ class ExcludedRow:
     variable_code: str | None
     event_time: dt.datetime
     available_time: dt.datetime
-    reason: str          # DUPLICATE | IMPLAUSIBLE
+    # DUPLICATE            la misma medición ya está presente
+    # AVAILABILITY_UNKNOWN no se pudo acotar cuándo estuvo disponible
+    reason: str
 
 
 # --------------------------------------------------------------------------- snapshot
