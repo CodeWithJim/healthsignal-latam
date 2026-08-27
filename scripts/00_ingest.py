@@ -113,9 +113,14 @@ def main() -> int:
     ).fetchone()[0]
     print(f"\n    total {tot:,}, de las cuales {okf:,} venían marcadas OK en el origen")
 
-    rule("RD-05  ·  retransmisiones y deduplicación")
-    print(f"  disponibilidad ajustada: {info['adjusted']:,} filas")
+    rule("RD-05  ·  retransmisiones, disponibilidad y deduplicación")
+    print(f"  disponibilidad acotada:  {info['adjusted']:,} filas")
+    print(f"  sin ventana que acote:   {info['sin_ventana']:,} filas   "
+          f"{'(ninguna: todas cubiertas)' if not info['sin_ventana'] else '← marcadas'}")
     print(f"  marcadas duplicadas:     {info['duplicates']:,} filas")
+    n_desc = con.execute(
+        "SELECT count(*) FROM observations WHERE NOT is_availability_known").fetchone()[0]
+    print(f"  disponibilidad incierta: {n_desc:,} filas (fuera del cálculo, citables)")
     for r in con.execute("""
         SELECT source_system, quality_flag, count(*), count(DISTINCT patient_id)
         FROM observations WHERE is_duplicate GROUP BY 1,2

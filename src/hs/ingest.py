@@ -163,7 +163,8 @@ def split_observations(con) -> None:
                  ELSE vcanon BETWEEN pmin AND pmax
                END,
                FALSE,
-               TRY_CAST(ref_low_raw AS DOUBLE), TRY_CAST(ref_high_raw AS DOUBLE)
+               TRY_CAST(ref_low_raw AS DOUBLE), TRY_CAST(ref_high_raw AS DOUBLE),
+               TRUE
         FROM _obs_typed
         WHERE reject_reason IS NULL
     """)
@@ -254,15 +255,25 @@ def load_clinical_facts(con, cfg) -> dict[str, int]:
     return read
 
 
-def adjust_retransmission_availability(con) -> int:
+def resolver_disponibilidad_retransmitidas(con) -> tuple[int, int]:
     """Una observación retransmitida no estuvo disponible en su timestamp.
 
-    RD-05: las 540 filas de MONITOR_RETRANSMIT caen dentro de una ventana de
-    connectivity_events del mismo paciente. Su disponibilidad real está acotada
-    por el fin de esa ventana, que es cuando la red pudo entregarlas. Decisión
-    del equipo bajo la cláusula oficial 'salvo otra lógica documentada'.
+    Los signos vitales no traen columna de disponibilidad: se deriva. La regla
+    oficial dice que valen desde su `timestamp` «salvo otra lógica documentada»,
+    y para las filas de MONITOR_RETRANSMIT esa regla por defecto es falsa: el
+    canal declara latencia DELAYED y la fila llegó cuando la red se restableció.
+
+    Se acota con el cierre de la ventana de conectividad que la contiene. No es
+    una estimación sino una cota: durante el corte no pudo llegar; al cerrarse,
+    sí. Sólo mueve hacia adelante.
+
+    Si no hay ventana que la contenga no se puede acotar nada, y dejarla en su
+    `timestamp` sería afirmar una disponibilidad que sabemos falsa. Esas filas
+    quedan marcadas: fuera del cálculo, pero en la tabla y citables.
+
+    Devuelve (filas ajustadas, filas sin ventana).
     """
-    return con.execute("""
+    ajustadas = con.execute("""
         UPDATE observations AS o
         SET available_time = c.end_time
         FROM intervals AS c
@@ -272,6 +283,19 @@ def adjust_retransmission_availability(con) -> int:
           AND o.event_time BETWEEN c.start_time AND c.end_time
           AND c.end_time > o.available_time
     """).fetchone()[0]
+
+    sin_ventana = con.execute("""
+        UPDATE observations AS o
+        SET is_availability_known = FALSE
+        WHERE o.source_system = 'MONITOR_RETRANSMIT'
+          AND NOT EXISTS (
+                SELECT 1 FROM intervals AS c
+                WHERE c.kind = 'CONNECTIVITY'
+                  AND c.patient_id = o.patient_id
+                  AND o.event_time BETWEEN c.start_time AND c.end_time)
+    """).fetchone()[0]
+
+    return ajustadas, sin_ventana
 
 
 def mark_duplicates(con) -> int:
@@ -420,8 +444,12 @@ def run(con=None, verbose: bool = True) -> dict[str, Any]:
         log("Cargando hechos clínicos ...")
         rows_read.update(load_clinical_facts(con, cfg))
 
-        n_adj = adjust_retransmission_availability(con)
-        log(f"Disponibilidad ajustada por retransmisión: {n_adj} filas")
+        n_adj, n_sin = resolver_disponibilidad_retransmitidas(con)
+        log(f"Disponibilidad acotada por retransmisión: {n_adj} filas")
+        if n_sin:
+            log(f"  {n_sin} retransmitida(s) sin ventana de conectividad que las acote:")
+            log("    marcadas is_availability_known = FALSE. Quedan fuera del cálculo")
+            log("    porque usarlas obligaría a afirmar una disponibilidad indefendible.")
 
         n_dup = mark_duplicates(con)
         log(f"Marcadas como duplicadas: {n_dup} filas")
@@ -434,7 +462,8 @@ def run(con=None, verbose: bool = True) -> dict[str, Any]:
         con.execute("DROP TABLE IF EXISTS _obs_typed")
         con.execute("DROP TABLE IF EXISTS _int_stage")
 
-        return {"run_id": run_id, "integrity": integrity, "adjusted": n_adj, "duplicates": n_dup}
+        return {"run_id": run_id, "integrity": integrity, "adjusted": n_adj,
+                "sin_ventana": n_sin, "duplicates": n_dup}
     finally:
         if own:
             con.close()

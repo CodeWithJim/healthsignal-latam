@@ -32,6 +32,11 @@ CREATE TABLE IF NOT EXISTS observations (
     is_duplicate    BOOLEAN   NOT NULL,   -- retransmisión detectada (RD-05)
     ref_low         DOUBLE,
     ref_high        DOUBLE,
+    -- FALSE cuando la fila llegó por un canal con retraso declarado pero no se
+    -- pudo acotar cuándo estuvo disponible. Usarla obligaría a afirmar una
+    -- disponibilidad indefendible, así que queda fuera del cálculo — pero en la
+    -- tabla, para poder citarla.
+    is_availability_known BOOLEAN NOT NULL DEFAULT TRUE,
 
     PRIMARY KEY (source_file, record_id),
     -- P-02: la regla de oro como restricción de base, no como disciplina.
@@ -157,3 +162,4 @@ CREATE TABLE IF NOT EXISTS evidence (
 ALTER TABLE signals ADD COLUMN IF NOT EXISTS k_concordantes INTEGER;
 ALTER TABLE signals ADD COLUMN IF NOT EXISTS suppressions VARCHAR;
 ALTER TABLE ingest_manifest ADD COLUMN IF NOT EXISTS estado VARCHAR;
+ALTER TABLE observations ADD COLUMN IF NOT EXISTS is_availability_known BOOLEAN DEFAULT TRUE;
