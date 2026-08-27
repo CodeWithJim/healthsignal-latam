@@ -200,7 +200,7 @@ def test_corte_exacto_sobre_datos_construidos(tmp_path):
     for rid, et, av, _ in filas:
         c.execute(
             "INSERT INTO observations VALUES ('x.csv',?,'PAT-0001',NULL,NULL,'HR','VITAL',"
-            "?,?,70.0,NULL,70.0,'bpm','bpm','MONITOR_GATEWAY','OK',TRUE,FALSE,NULL,NULL)",
+            "?,?,70.0,NULL,70.0,'bpm','bpm','MONITOR_GATEWAY','OK',TRUE,FALSE,NULL,NULL,TRUE)",
             [rid, et, av])
     try:
         snap = AsOfStore(c).snapshot("PAT-0001", T)

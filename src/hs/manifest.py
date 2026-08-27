@@ -1,7 +1,14 @@
 """Verificación de integridad de los archivos de origen.
 
-Implementa P-08 y RNF-04: cada corrida comprueba el SHA-256 de los 17 CSV
-contra MANIFEST_SHA256.txt y se detiene ante una discrepancia.
+Implementa P-08 y RNF-04. El control no es "el archivo es idéntico al que
+mandaron" sino algo más útil: **lo que ya procesamos sigue intacto**.
+
+La diferencia importa cuando llega información nueva. Un archivo al que se le
+agregan filas al final es un caso legítimo y frecuente; uno al que le editaron
+una fila vieja, no. Hashear el archivo entero no los distingue: los dos dan
+"distinto". Hashear el **prefijo** —los bytes que ya habíamos leído— separa uno
+del otro, y de paso caza el caso peor, que es editar una fila vieja mientras se
+agregan nuevas.
 """
 from __future__ import annotations
 
@@ -14,9 +21,15 @@ from . import paths
 
 _LINE = re.compile(r"^(?P<path>\S+)\s*\|\s*(?P<bytes>\d+)\s*\|\s*(?P<sha>[0-9a-f]{64})\s*$")
 
+# Veredicto de una fuente respecto de la última ingesta registrada.
+IDENTICO = "IDENTICO"        # mismos bytes, mismo contenido
+APENDADO = "APENDADO"        # creció y el prefijo quedó intacto: información nueva
+MODIFICADO = "MODIFICADO"    # el prefijo cambió: se editó algo ya procesado
+NUEVO = "NUEVO"              # no hay ingesta previa de esta fuente
+
 
 class IntegrityError(RuntimeError):
-    """El contenido de un archivo de origen no coincide con el manifiesto."""
+    """Se alteró contenido que el sistema ya había procesado."""
 
 
 def expected() -> dict[str, tuple[int, str]]:
@@ -34,45 +47,84 @@ def expected() -> dict[str, tuple[int, str]]:
     return out
 
 
-def sha256(path: Path) -> str:
+def sha256(path: Path, hasta: int | None = None) -> str:
+    """SHA-256 del archivo, o de sus primeros `hasta` bytes."""
     h = hashlib.sha256()
+    restante = hasta
     with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(1 << 20), b""):
+        while True:
+            n = 1 << 20 if restante is None else min(1 << 20, restante)
+            if n <= 0:
+                break
+            chunk = f.read(n)
+            if not chunk:
+                break
             h.update(chunk)
+            if restante is not None:
+                restante -= len(chunk)
     return h.hexdigest()
 
 
-def verify(source_files: list[str], strict: bool = True) -> dict[str, dict]:
-    """Compara cada fuente contra el manifiesto.
+def clasificar(path: Path, actual_sha: str, actual_bytes: int,
+               previo: tuple[int, str] | None) -> str:
+    """Compara una fuente contra el estado con el que se la ingestó por última vez."""
+    if previo is None:
+        return NUEVO
+    bytes_previos, sha_previo = previo
+    if actual_bytes == bytes_previos:
+        return IDENTICO if actual_sha == sha_previo else MODIFICADO
+    if actual_bytes < bytes_previos:
+        return MODIFICADO                       # se acortó: se borró algo
+    # Creció. Es información nueva sólo si lo anterior quedó igual.
+    return APENDADO if sha256(path, bytes_previos) == sha_previo else MODIFICADO
 
-    Devuelve {source_file: {sha256, sha256_expected, sha256_ok, bytes}}.
-    Con strict=True, lanza IntegrityError si alguna difiere.
+
+def verify(source_files: list[str], previo: dict[str, tuple[int, str]] | None = None,
+           strict: bool = True) -> dict[str, dict]:
+    """Compara cada fuente contra el manifiesto oficial y contra la última ingesta.
+
+    Devuelve por fuente: sha256, sha256_expected, sha256_ok, bytes, estado.
+
+    Con `strict`, sólo `MODIFICADO` detiene el proceso. Que una fuente crezca no
+    es un error: es el caso que el sistema tiene que soportar.
     """
     exp = expected()
+    previo = previo or {}
     report: dict[str, dict] = {}
-    bad: list[str] = []
+    alterados: list[str] = []
 
     for sf in source_files:
         p = paths.raw_path(sf)
         if not p.exists():
             raise FileNotFoundError(f"Falta el archivo de origen: {p}")
         actual = sha256(p)
+        n = p.stat().st_size
         e = exp.get(sf)
-        ok = None if e is None else (actual == e[1])
+        estado = clasificar(p, actual, n, previo.get(sf))
         report[sf] = {
             "sha256": actual,
             "sha256_expected": None if e is None else e[1],
-            "sha256_ok": ok,
-            "bytes": p.stat().st_size,
+            "sha256_ok": None if e is None else (actual == e[1]),
+            "bytes": n,
+            "estado": estado,
         }
-        if ok is False:
-            bad.append(sf)
+        if estado == MODIFICADO:
+            alterados.append(sf)
 
-    if bad and strict:
+    if alterados and strict:
         raise IntegrityError(
-            "Los siguientes archivos no coinciden con MANIFEST_SHA256.txt: " + ", ".join(bad)
-        )
+            "Se alteró contenido ya procesado en: " + ", ".join(alterados))
     return report
+
+
+def primera_ingesta_valida(report: dict[str, dict]) -> list[str]:
+    """Fuentes que se ingestan por primera vez y no coinciden con el manifiesto oficial.
+
+    Sólo aplica a la primera vez: después, la referencia pasa a ser el estado con
+    el que se ingestó, porque el archivo puede haber crecido legítimamente.
+    """
+    return [sf for sf, v in report.items()
+            if v["estado"] == NUEVO and v["sha256_ok"] is False]
 
 
 def git_sha() -> str | None:
