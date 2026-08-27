@@ -65,6 +65,9 @@ puntaje:
   # vale detectarla. Un artefacto de una muestra queda en racha 1 igual.
   umbral_persistencia: 0.5
   racha_objetivo_min: 60       # se traduce a muestras con la grilla de cada canal
+  # Un canal sin puntos suficientes para estimar pendiente aporta sólo nivel:
+  # media evidencia, medio techo.
+  factor_techo_sin_pendiente: 0.5
 
 multifuente:
   lambda: 1.0
@@ -92,6 +95,22 @@ confianza:
 # en la misma banda sólo tras el refractario y con incremento material (RF-11).
 eventizacion:
   cadencia_min: 60
+  # Desde cuándo se empieza a evaluar dentro del encuentro. Cubre el lookback
+  # completo, de modo que el baseline del primer instante evaluable tenga las
+  # 48 h enteras.
+  #
+  # Medido el 2026-08-27 sobre la cohorte completa, acortándolo:
+  #
+  #   warmup   baseline   señales   distractores   anticipación
+  #     18 h      ~12 h       503          1,3 %          1,8 h
+  #     30 h      ~24 h       392          0,8 %          2,0 h
+  #     54 h       48 h       210          0,0 %          4,0 h
+  #
+  # La hipótesis era que el mínimo de cobertura por canal bastaba como guarda y
+  # que arrancar antes ganaría anticipación. Lo contrario: un baseline de 12 h
+  # no cubre un ciclo diurno, así que la variación circadiana normal pasa a
+  # parecer desviación. Más señales, peores, y detectadas más tarde.
+  warmup_h: 54
   refractario_h: 12
   delta_reemision: 0.10
   emitir_desde: MEDIUM

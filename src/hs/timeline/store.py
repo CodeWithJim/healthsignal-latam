@@ -164,7 +164,10 @@ class AsOfStore:
                        warmup: dt.timedelta | None = None) -> list[dt.datetime]:
         """Instantes evaluables dentro del encuentro del paciente (RD-09).
 
-        `warmup` descarta el arranque, donde todavía no hay baseline suficiente.
+        `warmup` descarta el arranque del encuentro. No necesita cubrir el
+        lookback completo: el mínimo de cobertura de baseline por canal ya
+        impide emitir juicio sin historia suficiente, y esperar el lookback
+        entero retrasa la primera detección posible sin aportar garantía.
         """
         win = self.encounter_window(patient_id)
         if not win:

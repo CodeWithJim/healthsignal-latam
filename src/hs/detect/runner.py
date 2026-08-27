@@ -20,6 +20,7 @@ ORDEN = {"LOW": 0, "MEDIUM": 1, "HIGH": 2, "CRITICAL": 3}
 @dataclass(frozen=True)
 class EventConfig:
     cadencia: dt.timedelta
+    warmup: dt.timedelta
     refractario: dt.timedelta
     delta_reemision: float
     emitir_desde: str
@@ -32,6 +33,7 @@ class EventConfig:
         e, p = d["eventizacion"], d["prioridad"]
         return cls(
             cadencia=dt.timedelta(minutes=float(e["cadencia_min"])),
+            warmup=dt.timedelta(hours=float(e["warmup_h"])),
             refractario=dt.timedelta(hours=float(e["refractario_h"])),
             delta_reemision=float(e["delta_reemision"]),
             emitir_desde=str(e["emitir_desde"]),
@@ -66,7 +68,7 @@ class Stats:
 def evaluar_paciente(store, pid: str, cfg: ScoringConfig,
                      ev: EventConfig) -> Iterator[Assessment]:
     """Dictámenes del paciente en toda su grilla. Una sola consulta a la base."""
-    momentos = store.decision_times(pid, ev.cadencia)
+    momentos = store.decision_times(pid, ev.cadencia, warmup=ev.warmup)
     if not momentos:
         return
     tl = store.timeline(pid)

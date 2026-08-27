@@ -234,11 +234,17 @@ def score_channel(code: str, evidencia: Series, base: Series,
     pers = persistencia(z, float(cfg.puntaje["umbral_persistencia"]), objetivo)
 
     pn, pp = float(cfg.puntaje["peso_nivel"]), float(cfg.puntaje["peso_pendiente"])
-    if pendiente == 0.0 and z.size < int(cfg.minimos["muestras_para_pendiente"]):
-        crudo = nivel                                      # todo el peso al nivel
+    techo = float(cfg.puntaje["techo_por_canal"])
+    if z.size < int(cfg.minimos["muestras_para_pendiente"]):
+        # Sin puntos para estimar pendiente sólo se conoce el nivel: la mitad de
+        # la evidencia, por lo tanto la mitad del techo. Sin esto un canal de
+        # muestreo escaso —TEMP con huecos, presión arterial— alcanza el aporte
+        # máximo con tres o cuatro muestras.
+        crudo = nivel
+        techo *= float(cfg.puntaje["factor_techo_sin_pendiente"])
     else:
         crudo = pn * nivel + pp * pendiente
-    s_final = float(np.clip(crudo * pers, 0.0, float(cfg.puntaje["techo_por_canal"])))
+    s_final = float(np.clip(crudo * pers, 0.0, techo))
 
     muestras = tuple(
         (evidencia.source_files[i], evidencia.record_ids[i],

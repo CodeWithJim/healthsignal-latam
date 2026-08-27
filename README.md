@@ -282,6 +282,33 @@ configuraciones, incluso sin recorte. En RISA una sola variable desviada no alca
 HIGH ni siquiera sin la protección. El recorte por canal es una garantía estructural que en estos
 datos nunca tuvo que actuar; su efecto está medido sobre trayectorias sintéticas, no aquí.
 
+### Auditoría manual de señales altas
+
+El Documento Técnico Maestro recomienda auditar a mano algunas señales altas antes de cerrar. Se
+hizo de forma sistemática, buscando los patrones de los que hay que sospechar. Tres hallazgos:
+
+**Los pares de señales separadas por una hora son escalamientos, no repeticiones.** `PAT-0374` pasa
+por MEDIUM 0,608 → HIGH 0,844 → CRITICAL 0,915 en tres horas. Un escalamiento de banda es un cambio
+material de prioridad, que es exactamente lo que la política de eventización define como emisible.
+
+**Un canal sin pendiente calculable llegaba al aporte máximo.** Una señal CRITICAL tenía a `TEMP`
+como canal dominante con sólo 4 muestras en la ventana. Con menos de cinco puntos la pendiente no
+se estima, así que el canal aporta sólo nivel — pero podía tocar el techo completo igual.
+Corregido: **sin pendiente, medio techo.** Media evidencia, medio aporte.
+
+**El arranque de la evaluación se midió, no se supuso.** 31 de 56 señales altas nacían en el primer
+instante evaluable, lo que sugería que un warmup más corto ganaría anticipación. Se probó:
+
+| warmup | baseline real | señales | distractores | anticipación |
+|---|---|---|---|---|
+| 18 h | ~12 h | 503 | 1,3 % | 1,8 h |
+| 30 h | ~24 h | 392 | 0,8 % | 2,0 h |
+| **54 h** | **48 h** | **210** | **0,0 %** | **4,0 h** |
+
+Lo contrario de lo esperado, y monótono en las tres columnas. Un baseline de 12 horas no cubre un
+ciclo diurno, así que la variación circadiana normal pasa a parecer desviación: más señales, peores,
+y detectadas más tarde. El warmup se mantiene en 54 h.
+
 ### Criterios de aceptación del motor
 
 Seis trayectorias sintéticas, sin leer un CSV. Si estas formas no se distinguen, lo que el motor
@@ -337,6 +364,9 @@ Verificados sobre RISA Data V1.0 Candidate 1, con los 17 archivos coincidiendo c
   es distinguible del baseline. La ganancia honesta es de una hora, no de dos.
 - **La ventana de evidencia es fija en 6 horas.** Un deterioro más lento que eso se detecta tarde;
   una ventana adaptativa por canal es trabajo pendiente.
+- **Las primeras 54 horas de cada encuentro no se evalúan.** Es lo que hace falta para tener un
+  baseline diurno completo, y acortarlo empeora todo (ver la auditoría). Un deterioro que empieza
+  en ese tramo se detecta al primer instante evaluable, no antes.
 - **No hay control de acceso.** La API es local y de sólo lectura; un despliegue real necesitaría
   autenticación y autorización por rol.
 - **Alcance clínico.** El sistema señala situaciones que ameritan revisión. No diagnostica, no

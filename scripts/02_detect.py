@@ -38,9 +38,15 @@ def pct(v: list[float], p: float) -> float:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--pacientes", type=int, default=0, help="limitar la cohorte")
+    ap.add_argument("--warmup", type=float, default=None,
+                    help="horas de arranque antes del primer instante evaluable")
+    ap.add_argument("--no-export", action="store_true",
+                    help="no escribir results/: para comparar configuraciones")
     args = ap.parse_args()
 
     d = yaml.safe_load((paths.CONFIG / "scoring.yaml").read_text(encoding="utf-8"))
+    if args.warmup is not None:
+        d["eventizacion"]["warmup_h"] = args.warmup
     cfg, ev = ScoringConfig.from_dict(d), EventConfig.from_dict(d)
 
     con = ingest.connect()          # aplica el esquema: incluye migraciones
@@ -50,7 +56,8 @@ def main() -> int:
         cohorte = cohorte[:args.pacientes]
 
     run_id = "det-" + dt.datetime.now().strftime("%Y%m%dT%H%M%S")
-    rule(f"BARRIDO  ·  {len(cohorte):,} pacientes  ·  cadencia {ev.cadencia}  ·  {cfg.model_version}")
+    rule(f"BARRIDO  ·  {len(cohorte):,} pacientes  ·  cadencia {ev.cadencia}  ·  "
+         f"warmup {ev.warmup}  ·  {cfg.model_version}")
     t0 = time.time()
 
     def progreso(i, n, s):
@@ -96,7 +103,11 @@ def main() -> int:
 
     rule("EXPORTACIÓN")
     ns, ne = guardar(con, señales, run_id)
-    sp, ep = exportar(con, paths.RESULTS)
+    if args.no_export:
+        print("  (--no-export) tablas actualizadas, results/ sin tocar")
+        sp = ep = paths.RESULTS / "(no escrito)"
+    else:
+        sp, ep = exportar(con, paths.RESULTS)
     print(f"  signals.csv    {ns:,} filas   {sp}")
     print(f"  evidence.csv   {ne:,} filas   {ep}")
     print(f"  evidencia por señal: {ne / max(1, ns):.1f} en promedio")
