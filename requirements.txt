@@ -1,4 +1,11 @@
 duckdb==1.5.5
 numpy==2.4.6
 PyYAML==6.0.3
+
+# API de consulta y decisión en vivo
+fastapi==0.141.1
+uvicorn[standard]==0.52.4
+
+# Pruebas
 pytest==9.1.1
+httpx==0.28.1

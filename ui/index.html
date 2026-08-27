@@ -1,0 +1,270 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HealthSignal LATAM</title>
+<style>
+  :root{
+    --ground:#0d1618; --surface:#141f21; --surface2:#1b282a;
+    --line:#2a3a3c; --text:#e2edeb; --text2:#9db0b1; --text3:#71888a;
+    --accent:#4fbab2; --crit:#d77162; --high:#d9954a; --med:#4fbab2; --low:#71888a;
+    --good:#6fb077;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--ground);color:var(--text);
+       font:14px/1.5 ui-sans-serif,system-ui,"Segoe UI",Roboto,sans-serif}
+  code,.mono{font-family:ui-monospace,Consolas,monospace}
+  header{padding:14px 20px;border-bottom:1px solid var(--line);
+         display:flex;gap:18px;align-items:baseline;flex-wrap:wrap}
+  h1{font-size:15px;margin:0;font-weight:600;letter-spacing:.02em}
+  .sub{color:var(--text3);font-size:12px}
+  .grid{display:grid;grid-template-columns:340px 1fr;gap:0;height:calc(100vh - 53px)}
+  @media(max-width:900px){.grid{grid-template-columns:1fr;height:auto}}
+  aside{border-right:1px solid var(--line);overflow-y:auto}
+  main{overflow-y:auto;padding:20px}
+  .bar{padding:10px 14px;border-bottom:1px solid var(--line);display:flex;gap:6px;flex-wrap:wrap}
+  button{background:var(--surface2);color:var(--text2);border:1px solid var(--line);
+         border-radius:4px;padding:4px 9px;font-size:12px;cursor:pointer;font-family:inherit}
+  button:hover{color:var(--text);border-color:var(--accent)}
+  button.on{background:var(--accent);border-color:var(--accent);color:#0d1618;font-weight:600}
+  input{background:var(--surface2);border:1px solid var(--line);color:var(--text);
+        border-radius:4px;padding:5px 8px;font:12px ui-monospace,monospace}
+  .row{padding:9px 14px;border-bottom:1px solid var(--line);cursor:pointer;display:flex;
+       gap:9px;align-items:center}
+  .row:hover{background:var(--surface)}
+  .row.sel{background:var(--surface2);box-shadow:inset 3px 0 0 var(--accent)}
+  .pill{font-size:10px;font-weight:700;letter-spacing:.06em;padding:2px 6px;border-radius:3px;
+        white-space:nowrap}
+  .CRITICAL{background:#d7716222;color:var(--crit)}
+  .HIGH{background:#d9954a22;color:var(--high)}
+  .MEDIUM{background:#4fbab222;color:var(--med)}
+  .LOW{background:#71888a22;color:var(--low)}
+  .rid{font-family:ui-monospace,monospace;font-size:11px;color:var(--text2);flex:1}
+  .sc{font-family:ui-monospace,monospace;font-size:12px;color:var(--text)}
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:6px;
+        padding:16px 18px;margin-bottom:16px}
+  .lbl{font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--text3);
+       margin-bottom:8px}
+  table{width:100%;border-collapse:collapse;font-size:12px}
+  th{text-align:left;font-size:10px;letter-spacing:.08em;text-transform:uppercase;
+     color:var(--text3);padding:6px 8px;border-bottom:1px solid var(--line);font-weight:600}
+  td{padding:6px 8px;border-bottom:1px solid var(--surface2);color:var(--text2);
+     font-family:ui-monospace,monospace}
+  td.k{color:var(--text)}
+  .expl{color:var(--text2);font-size:13px;line-height:1.65}
+  .kv{display:flex;gap:22px;flex-wrap:wrap;margin-bottom:12px}
+  .kv div span{display:block;font-size:10px;letter-spacing:.1em;text-transform:uppercase;
+               color:var(--text3)}
+  .kv div b{font-size:19px;font-family:ui-monospace,monospace;font-weight:600}
+  .rule{border-left:2px solid var(--high);padding:7px 12px;margin:6px 0;
+        background:var(--surface2);border-radius:0 4px 4px 0;font-size:12px}
+  .rule.zero{border-left-color:var(--text3)}
+  .rule b{color:var(--text)}
+  .empty{color:var(--text3);padding:40px 0;text-align:center}
+  a{color:var(--accent)}
+  .scroll{overflow-x:auto}
+</style>
+</head>
+<body>
+<header>
+  <h1>HealthSignal LATAM</h1>
+  <span class="sub">motor de concordancia · apoyo a la decisión, no diagnóstico</span>
+  <span style="flex:1"></span>
+  <input id="p" value="PAT-0869" size="10" title="paciente">
+  <input id="t" value="2026-07-20T18:00" size="17" title="instante de decisión">
+  <button onclick="decidir()">Decidir en vivo</button>
+  <span class="sub" id="ver"></span>
+</header>
+
+<div class="grid">
+  <aside>
+    <div class="bar" id="filtros"></div>
+    <div id="lista"></div>
+  </aside>
+  <main id="det"><div class="empty">Elegí una señal, o pedí una decisión en un instante arbitrario.</div></main>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+const fecha = s => String(s ?? '').replace('T', ' ').slice(0, 16);
+let filtro = null, sel = null;
+
+fetch('/health').then(r => r.json()).then(h => {
+  $('#ver').textContent = `${h.señales} señales · ${h.model_version}`;
+});
+
+['TODAS','CRITICAL','HIGH','MEDIUM','LOW'].forEach(p => {
+  const b = document.createElement('button');
+  b.textContent = p; b.onclick = () => { filtro = p === 'TODAS' ? null : p; cargar(); };
+  if (p === 'TODAS') b.className = 'on';
+  $('#filtros').appendChild(b);
+});
+
+async function cargar(){
+  [...$('#filtros').children].forEach(b =>
+    b.className = (b.textContent === (filtro || 'TODAS')) ? 'on' : '');
+  const q = new URLSearchParams({limit: 200});
+  if (filtro) q.set('priority', filtro);
+  const filas = await (await fetch('/signals?' + q)).json();
+  $('#lista').innerHTML = filas.map(s => `
+    <div class="row" data-id="${s.signal_id}" onclick="ver('${s.signal_id}')">
+      <span class="pill ${s.priority_level}">${s.priority_level}</span>
+      <span class="rid">${s.patient_id}<br><span style="color:var(--text3)">${fecha(s.decision_datetime)}</span></span>
+      <span class="sc">${s.risk_score.toFixed(3)}</span>
+    </div>`).join('') || '<div class="empty">Sin señales.</div>';
+}
+
+async function ver(id){
+  sel = id;
+  [...document.querySelectorAll('.row')].forEach(r =>
+    r.classList.toggle('sel', r.dataset.id === id));
+  const d = await (await fetch('/signals/' + id)).json();
+  const s = d.señal;
+  const ev = await (await fetch(`/decide?patient=${s.patient_id}&at=${encodeURIComponent(
+    String(s.decision_datetime).replace(' ', 'T'))}`)).json();
+  pintar(ev, d.evidencia);
+}
+
+async function decidir(){
+  const p = $('#p').value.trim(), t = $('#t').value.trim();
+  const r = await fetch(`/decide?patient=${encodeURIComponent(p)}&at=${encodeURIComponent(t)}`);
+  if (!r.ok) { $('#det').innerHTML = `<div class="empty">${esc((await r.json()).detail)}</div>`; return; }
+  const d = await r.json();
+  const porRol = {};
+  d.evidencia.forEach(e => (porRol[e.evidence_role] ||= []).push(e));
+  pintar(d, porRol);
+}
+
+function pintar(d, porRol){
+  const canales = d.canales.filter(c => c.contribucion > 0);
+  $('#det').innerHTML = `
+  <div class="card">
+    <div class="kv">
+      <div><span>paciente</span><b>${esc(d.patient_id)}</b></div>
+      <div><span>decisión</span><b style="font-size:15px">${fecha(d.decision_datetime)}</b></div>
+      <div><span>riesgo</span><b>${d.risk_score.toFixed(3)}</b></div>
+      <div><span>confianza</span><b>${d.confidence_score.toFixed(2)}</b></div>
+      <div><span>prioridad</span><b><span class="pill ${d.priority_level}"
+           style="font-size:13px">${d.priority_level}</span></b></div>
+      <div><span>concordantes</span><b>${d.k_concordantes}</b></div>
+    </div>
+    <div class="expl">${esc(d.explanation)}</div>
+  </div>
+
+  ${grafico(d)}
+
+  <div class="card">
+    <div class="lbl">Contribución por canal · desviaciones contra el baseline del propio paciente</div>
+    <div class="scroll"><table>
+      <tr><th>canal</th><th>aporte</th><th>nivel</th><th>deriva</th><th>persist.</th>
+          <th>cobertura</th><th>último</th><th>baseline</th><th>n ev/bl</th></tr>
+      ${d.canales.map(c => `<tr>
+        <td class="k">${c.variable_code}</td><td class="k">${c.contribucion.toFixed(2)}</td>
+        <td>${c.nivel_sigmas >= 0 ? '+' : ''}${c.nivel_sigmas.toFixed(1)}σ</td>
+        <td>${c.deriva_sigmas >= 0 ? '+' : ''}${c.deriva_sigmas.toFixed(1)}σ</td>
+        <td>${(c.persistencia * 100).toFixed(0)}%</td>
+        <td>${(c.cobertura * 100).toFixed(0)}%</td>
+        <td>${c.ultimo_valor}</td>
+        <td>${c.baseline_mediana} ±${c.baseline_escala}</td>
+        <td>${c.n_evidencia}/${c.n_baseline}</td></tr>`).join('')}
+    </table></div>
+  </div>
+
+  ${d.reglas.length ? `<div class="card">
+    <div class="lbl">Reglas evaluadas</div>
+    ${d.reglas.map(r => `<div class="rule ${r.fuerza ? '' : 'zero'}">
+      <b>${esc(r.regla)}</b> ${r.fuerza ? `— puntaje reducido ${(r.fuerza * 100).toFixed(0)}%`
+                                        : '— evaluada sin suprimir'}<br>
+      <span style="color:var(--text3)">${esc(r.motivo)}</span>
+      ${r.citas.length ? `<br><span class="mono" style="font-size:11px;color:var(--text3)">
+        cita: ${r.citas.map(esc).join(', ')}</span>` : ''}
+    </div>`).join('')}
+  </div>` : ''}
+
+  <div class="card">
+    <div class="lbl">Evidencia · cada fila apunta a un registro real de RISA</div>
+    ${Object.entries(porRol).map(([rol, filas]) => `
+      <div style="margin-bottom:14px">
+        <div style="font-size:11px;color:var(--accent);margin-bottom:4px">${rol} · ${filas.length}</div>
+        <div class="scroll"><table>
+          <tr><th>source_file</th><th>record_id</th><th>variable</th>
+              <th>ocurrió</th><th>disponible</th></tr>
+          ${filas.slice(0, 12).map(e => `<tr>
+            <td>${esc(e.source_file)}</td>
+            <td class="k"><a href="/source-row?source_file=${encodeURIComponent(e.source_file)}&record_id=${encodeURIComponent(e.record_id)}"
+               target="_blank">${esc(e.record_id)}</a></td>
+            <td>${esc(e.variable_code || '')}</td>
+            <td>${fecha(e.event_datetime)}</td>
+            <td>${fecha(e.available_datetime)}</td></tr>`).join('')}
+        </table></div>
+        ${filas.length > 12 ? `<div style="font-size:11px;color:var(--text3);margin-top:4px">
+          y ${filas.length - 12} más</div>` : ''}
+      </div>`).join('')}
+  </div>`;
+
+  dibujar(d);
+}
+
+function grafico(d){
+  return `<div class="card"><div class="lbl">Ventana de evidencia · ${fecha(d.evidence_start)}
+    → ${fecha(d.evidence_end)}</div><div id="cv"></div></div>`;
+}
+
+async function dibujar(d){
+  const codes = d.canales.filter(c => c.contribucion > 0).map(c => c.variable_code);
+  if (!codes.length) { $('#cv').innerHTML =
+    '<div style="color:var(--text3);font-size:12px">Sin canales con desviación.</div>'; return; }
+  const desde = new Date(new Date(d.evidence_start).getTime() - 6 * 3600e3).toISOString().slice(0, 19);
+  const q = new URLSearchParams({desde, hasta: d.decision_datetime, as_of: d.decision_datetime,
+                                 variables: codes.join(',')});
+  const r = await (await fetch(`/patients/${d.patient_id}/timeline?${q}`)).json();
+
+  const COL = {HR:'#d77162', RR:'#d9954a', TEMP:'#4fbab2', SpO2:'#6fb077',
+               SBP:'#9b8ec4', DBP:'#c4a08e'};
+  const W = 900, H = 190, PL = 46, PR = 12, PT = 12, PB = 26;
+  const t0 = new Date(desde).getTime(), t1 = new Date(d.decision_datetime).getTime();
+  const ev0 = new Date(d.evidence_start).getTime();
+  const x = t => PL + (t - t0) / (t1 - t0) * (W - PL - PR);
+
+  let paths = '', leyenda = '';
+  codes.forEach(c => {
+    const pts = (r.series[c] || []).filter(p => p.value_num != null);
+    if (pts.length < 2) return;
+    const vs = pts.map(p => p.value_num);
+    const lo = Math.min(...vs), hi = Math.max(...vs), rango = (hi - lo) || 1;
+    const y = v => PT + (1 - (v - lo) / rango) * (H - PT - PB);
+    paths += `<polyline fill="none" stroke="${COL[c] || '#888'}" stroke-width="1.8"
+      stroke-linejoin="round" points="${pts.map(p =>
+      `${x(new Date(p.event_time).getTime()).toFixed(1)},${y(p.value_num).toFixed(1)}`).join(' ')}"/>`;
+    const ult = pts[pts.length - 1];
+    paths += `<circle cx="${x(new Date(ult.event_time).getTime()).toFixed(1)}"
+      cy="${y(ult.value_num).toFixed(1)}" r="3" fill="${COL[c] || '#888'}"/>`;
+    leyenda += `<span style="color:${COL[c] || '#888'};font-size:11px;font-family:ui-monospace,monospace">
+      ■ ${c} ${lo.toFixed(1)}–${hi.toFixed(1)}</span> `;
+  });
+
+  $('#cv').innerHTML = `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto">
+      <rect x="${x(ev0)}" y="${PT}" width="${W - PR - x(ev0)}" height="${H - PT - PB}"
+            fill="#4fbab210"/>
+      <line x1="${x(ev0)}" y1="${PT}" x2="${x(ev0)}" y2="${H - PB}"
+            stroke="#4fbab2" stroke-width="1" stroke-dasharray="3 3"/>
+      <line x1="${PL}" y1="${H - PB}" x2="${W - PR}" y2="${H - PB}" stroke="#2a3a3c"/>
+      ${paths}
+      <text x="${x(ev0) + 5}" y="${PT + 11}" fill="#4fbab2" font-size="10"
+            font-family="ui-monospace,monospace">inicio ventana de evidencia</text>
+      <text x="${PL}" y="${H - 8}" fill="#71888a" font-size="10"
+            font-family="ui-monospace,monospace">${fecha(desde)}</text>
+      <text x="${W - PR}" y="${H - 8}" fill="#71888a" font-size="10" text-anchor="end"
+            font-family="ui-monospace,monospace">${fecha(d.decision_datetime)} · decisión</text>
+    </svg><div style="margin-top:6px;display:flex;gap:14px;flex-wrap:wrap">${leyenda}</div>
+    <div style="margin-top:8px;font-size:11px;color:var(--text3)">
+      Cada punto es una observación disponible en el instante de decisión. Escala propia por canal:
+      lo que importa es la forma conjunta, no la magnitud absoluta.</div>`;
+}
+
+cargar();
+</script>
+</body>
+</html>

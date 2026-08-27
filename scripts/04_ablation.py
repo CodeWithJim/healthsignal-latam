@@ -49,16 +49,21 @@ def variantes(base: dict) -> list[tuple[str, dict]]:
         return d
 
     def sin_supresion(d):
-        for r in d["supresion"].values():
-            r["fuerza"] = 0.0
-        d["supresion"]["actividad"]["dominancia_hr"] = 2.0
-        d["supresion"]["calidad"]["fraccion"] = 2.0
-        d["supresion"]["transitorio"]["persistencia_min"] = -1.0
+        d["supresion"]["activas"] = False
+        return d
+
+    def sin_techo(d):
+        # Sin recorte por canal, la magnitud de uno solo domina la suma. Es el
+        # motor que el principio P-07 prohíbe, y la referencia contra la cual
+        # se mide todo lo demás.
+        d["puntaje"]["techo_por_canal"] = 1e9
         return d
 
     v = []
+    d = sin_techo(sin_supresion(sin_persistencia(sin_concordancia(copy.deepcopy(base)))))
+    v.append(("0 · magnitud sin recorte", d))
     d = sin_supresion(sin_persistencia(sin_concordancia(copy.deepcopy(base))))
-    v.append(("1 · sólo nivel y pendiente", d))
+    v.append(("1 · + recorte por canal", d))
     d = sin_supresion(sin_concordancia(copy.deepcopy(base)))
     v.append(("2 · + persistencia", d))
     d = sin_supresion(copy.deepcopy(base))
@@ -73,15 +78,22 @@ def main() -> int:
     args = ap.parse_args()
 
     base = yaml.safe_load((paths.CONFIG / "scoring.yaml").read_text(encoding="utf-8"))
-    con = duckdb.connect(str(paths.WAREHOUSE))
+    # Base en memoria con el almacén adjunto de sólo lectura: la ablación no
+    # necesita escribir nada y así no bloquea a la API ni a otra corrida.
+    con = duckdb.connect()
+    con.execute(f"ATTACH '{str(paths.WAREHOUSE).replace(chr(92), '/')}' AS wh (READ_ONLY)")
+    con.execute("USE wh")
     cohorte = AsOfStore(con).patients()[:args.pacientes]
+    con.execute("USE memory")
+    for t in ("observations", "intervals", "clinical_facts", "patients"):
+        con.execute(f"CREATE OR REPLACE VIEW {t} AS SELECT * FROM wh.{t}")
 
     con.execute("""
-        CREATE OR REPLACE TEMP TABLE cand (
+        CREATE OR REPLACE TABLE cand (
             variante VARCHAR, signal_id VARCHAR, patient_id VARCHAR,
             decision_datetime TIMESTAMP, evidence_start TIMESTAMP,
             evidence_end TIMESTAMP, risk_score DOUBLE, priority_level VARCHAR,
-            supresiones VARCHAR, canal_dominante VARCHAR)
+            supresiones VARCHAR, canal_dominante VARCHAR, k INTEGER)
     """)
 
     print(f"Ablación sobre {len(cohorte)} pacientes\n")
@@ -95,26 +107,27 @@ def main() -> int:
             filas.append((nombre, signal_id(a), a.patient_id, a.T, a.evidence_start,
                           a.evidence_end, a.risk, a.priority,
                           ",".join(s.regla for s in a.supresiones),
-                          dom.variable_code if dom else None))
+                          dom.variable_code if dom else None, a.k))
         if filas:
-            con.executemany("INSERT INTO cand VALUES (?,?,?,?,?,?,?,?,?,?)", filas)
+            con.executemany("INSERT INTO cand VALUES (?,?,?,?,?,?,?,?,?,?,?)", filas)
         print(f"  {nombre:32} {len(señales):5,} señales   "
               f"({st.evaluaciones:,} evaluaciones)")
 
-    print("\n" + "=" * 92)
-    print(f"{'configuración':32} {'HIGH+':>7} {'distractor':>11} {'tasa':>7} "
-          f"{'anticip.':>9} {'pacientes':>10}")
-    print("=" * 92)
+    print("\n" + "=" * 104)
+    print(f"{'configuración':32} {'HIGH+':>7} {'de 1 canal':>11} {'tasa':>7} "
+          f"{'distractor':>11} {'anticip.':>9} {'pacientes':>10}")
+    print("=" * 104)
     for nombre, _ in variantes(base):
         r = con.execute(f"""
             WITH c AS (SELECT * FROM cand WHERE variante = ?
                        AND priority_level IN ('HIGH','CRITICAL'))
             SELECT count(*),
                    count(*) FILTER (WHERE ({MARCADORES}) AND coalesce(supresiones,'') = ''),
-                   count(DISTINCT patient_id)
+                   count(DISTINCT patient_id),
+                   count(*) FILTER (WHERE k <= 1)
             FROM c
         """, [nombre]).fetchone()
-        altas, malas, pac = r
+        altas, malas, pac, solos = r
         ant = con.execute("""
             WITH c AS (SELECT * FROM cand WHERE variante = ?
                        AND priority_level IN ('HIGH','CRITICAL')),
@@ -130,11 +143,15 @@ def main() -> int:
               GROUP BY 1,2)
             SELECT round(median(epoch(t - decision_datetime)/3600), 1) FROM pico
         """, [nombre]).fetchone()[0]
-        tasa = f"{100 * malas / altas:.1f}%" if altas else "—"
-        print(f"{nombre:32} {altas:7,} {malas:11,} {tasa:>7} "
+        tasa = f"{100 * solos / altas:.1f}%" if altas else "—"
+        print(f"{nombre:32} {altas:7,} {solos:11,} {tasa:>7} {malas:11,} "
               f"{(str(ant) + ' h') if ant else '—':>9} {pac:10,}")
 
-    print("\n  distractor = ventana que coincide con un marcador conocido SIN supresión registrada")
+    print("\n  de 1 canal = señales HIGH+ sustentadas en un solo canal desviado.")
+    print("               Es el modo de falla que el principio P-07 prohíbe: magnitud")
+    print("               sin corroboración. Bajar esa fracción sin perder anticipación")
+    print("               es exactamente lo que la concordancia debe comprar.")
+    print("  distractor = coincide con un marcador conocido SIN dejar constancia de evaluarlo")
     print("  anticip.   = mediana de horas hasta el máximo posterior del canal dominante")
     con.close()
     return 0

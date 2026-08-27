@@ -47,9 +47,31 @@ versionan: pesan 244 MB y su integridad se verifica contra `MANIFEST_SHA256.txt`
 # Tabla de ablación
 .venv\Scripts\python.exe scripts\04_ablation.py --pacientes 300
 
+# Interfaz y API de decisión en vivo
+.venv\Scripts\python.exe scripts\05_serve.py
+
 # Criterios de aceptación
 .venv\Scripts\python.exe -m pytest tests -q
 ```
+
+## Decisión en vivo
+
+```
+GET /decide?patient=PAT-0869&at=2026-07-20T18:00:00
+```
+
+El evaluador elige **cualquier paciente y cualquier instante** y el motor computa
+en el momento, usando exclusivamente evidencia con `available_time <= at`.
+Devuelve puntaje, prioridad, confianza, la contribución de cada canal, las reglas
+evaluadas con su cita, y las filas fuente exactas. Nada precargado.
+
+Desde `/source-row?source_file=…&record_id=…` se llega a la fila tal cual está en
+el CSV original. `source_file` se valida contra la lista de fuentes cargadas: la
+ruta nunca se construye con texto libre del pedido.
+
+La interfaz en `http://127.0.0.1:8000/` muestra el ranking, el timeline de los
+canales con la ventana de evidencia sombreada, la tabla de contribuciones y la
+evidencia agrupada por rol, con cada `record_id` enlazado a su fila original.
 
 ## Arquitectura
 
@@ -124,6 +146,34 @@ Cuatro canales moviéndose moderadamente juntos puntúan **4,3 veces más** que 
 solo desviado al extremo. Eso no es un ajuste de umbrales: el recorte por canal
 antes de agregar hace que la concordancia pese más que la magnitud por
 construcción (principio P-07).
+
+## Ablación · qué aporta cada mecanismo
+
+Sobre 250 pacientes y 24.605 evaluaciones, apagando un mecanismo por vez:
+
+| Configuración | Señales | HIGH+ | de 1 canal | distractor | anticipación | pacientes |
+|---|---|---|---|---|---|---|
+| 0 · magnitud sin recorte | 117 | 13 | 0 | 0 | 4,3 h | 13 |
+| 1 · + recorte por canal | 114 | 13 | 0 | 0 | 4,0 h | 13 |
+| 2 · **+ persistencia** | **81** | 13 | 0 | 0 | 4,0 h | 13 |
+| 3 · **+ concordancia** | 80 | **20** | 0 | 1 | 4,0 h | **16** |
+| 4 · **+ supresión** (completo) | 80 | 20 | 0 | **0** | 4,0 h | 16 |
+
+Lo que la tabla sí demuestra:
+
+- **La persistencia elimina 33 señales (−29 %) sin costo de detección.** HIGH+ se
+  mantiene en 13 y la anticipación en 4,0 h: lo que se va son transitorios.
+- **La concordancia sube las detecciones de 13 a 20 (+54 %) y los pacientes de 13
+  a 16**, sin perder anticipación. No filtra: encuentra deterioros multicanal que
+  la magnitud sola subestima.
+- **La supresión elimina el último distractor sin registrar**, sin tocar el
+  volumen de HIGH+.
+
+Lo que la tabla **no** demuestra, y conviene decirlo: la columna «de 1 canal» da
+cero en todas las configuraciones, incluso sin recorte. En RISA una sola variable
+desviada no alcanza el umbral de HIGH ni siquiera sin la protección. El recorte
+por canal es una garantía estructural que en estos datos nunca tuvo que actuar;
+su efecto está medido sobre trayectorias sintéticas, no aquí.
 
 ## Hallazgos que condicionan el diseño
 

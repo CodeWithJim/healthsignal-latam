@@ -408,7 +408,10 @@ def assess(snap: PatientSnapshot, cfg: ScoringConfig) -> Assessment:
     ms, citas_ms = _multifuente(snap, t1, cfg)
     bruto = base * mult + (ms if k >= 1 else 0.0)
 
-    supresiones = tuple(r for r in (f(snap, canales, t0, t1, cfg) for f in REGLAS) if r)
+    if cfg.supresion.get("activas", True):
+        supresiones = tuple(r for r in (f(snap, canales, t0, t1, cfg) for f in REGLAS) if r)
+    else:
+        supresiones = ()          # sólo para ablación: mide qué aportan las reglas
     puntaje = bruto
     for sup in supresiones:
         puntaje *= (1.0 - sup.fuerza)
