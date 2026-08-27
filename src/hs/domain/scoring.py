@@ -12,6 +12,7 @@ from __future__ import annotations
 import datetime as dt
 import math
 from dataclasses import dataclass, field
+from functools import lru_cache
 from typing import Any, Mapping
 
 import numpy as np
@@ -135,6 +136,12 @@ class Assessment:
 # --------------------------------------------------------------------------- estadística
 
 
+@lru_cache(maxsize=64)
+def _pares(n: int) -> tuple[np.ndarray, np.ndarray]:
+    """Índices de pares, memoizados por tamaño: el barrido llama esto ~900.000 veces."""
+    return np.triu_indices(n, k=1)
+
+
 def theil_sen(x: np.ndarray, y: np.ndarray) -> float:
     """Mediana de las pendientes entre todos los pares de puntos.
 
@@ -144,7 +151,7 @@ def theil_sen(x: np.ndarray, y: np.ndarray) -> float:
     n = x.size
     if n < 2:
         return 0.0
-    i, j = np.triu_indices(n, k=1)
+    i, j = _pares(n)
     dx = x[j] - x[i]
     ok = dx != 0
     if not ok.any():
@@ -257,6 +264,12 @@ def _indices_representativos(z: np.ndarray) -> list[int]:
 
 
 def _sup_actividad(snap, canales, t0, t1, cfg) -> Suppression | None:
+    """Actividad física como explicación alternativa.
+
+    Cuando el contexto está presente pero NO explica el patrón, se registra
+    igual con fuerza cero: haber mirado la actividad y haber concluido que no
+    alcanza es una decisión, y las decisiones no se toman en silencio (P-04).
+    """
     p = cfg.supresion["actividad"]
     ivs = snap.intervals_overlapping(
         t0, t1, kind="CONTEXT",
@@ -266,16 +279,23 @@ def _sup_actividad(snap, canales, t0, t1, cfg) -> Suppression | None:
            if iv.subtype == "RECOVERY_PHASE" or iv.value_text in ("HIGH", "MODERATE")]
     if not ivs:
         return None
-    total = sum(c.s for c in canales.values() if c.s > 0)
-    hr = canales.get("HR")
-    if not hr or total <= 0 or hr.s / total < float(p["dominancia_hr"]):
-        return None
     citas = tuple(Citation(iv.source_file, iv.record_id, None, iv.start,
                            iv.available, "CONTEXT") for iv in ivs)
     etiquetas = ", ".join(f"{iv.subtype}={iv.value_text}" for iv in ivs[:3])
-    return Suppression("actividad", float(p["fuerza"]),
-                       f"desviación dominada por HR ({hr.s / total:.0%} del puntaje) "
-                       f"con contexto de actividad disponible ({etiquetas})", citas)
+
+    total = sum(c.s for c in canales.values() if c.s > 0)
+    hr = canales.get("HR")
+    dominancia = (hr.s / total) if (hr and total > 0) else 0.0
+    if dominancia >= float(p["dominancia_hr"]):
+        return Suppression("actividad", float(p["fuerza"]),
+                           f"desviación dominada por HR ({dominancia:.0%} del puntaje) "
+                           f"con contexto de actividad disponible ({etiquetas})", citas)
+
+    k = sum(1 for c in canales.values() if c.s >= float(cfg.puntaje["umbral_canal_concordante"]))
+    return Suppression("actividad_evaluada", 0.0,
+                       f"contexto de actividad presente ({etiquetas}) pero no explica el "
+                       f"patrón: {k} canales concordantes y HR aporta sólo "
+                       f"{dominancia:.0%} del puntaje", citas)
 
 
 def _sup_calidad(snap, canales, t0, t1, cfg) -> Suppression | None:
@@ -292,8 +312,14 @@ def _sup_calidad(snap, canales, t0, t1, cfg) -> Suppression | None:
                                   mal.times[i].astype(dt.datetime),
                                   mal.available[i].astype(dt.datetime), "QUALITY"))
     total = malas + buenas
-    if total == 0 or malas / total < float(p["fraccion"]):
+    if malas == 0:
         return None
+    if malas / total < float(p["fraccion"]):
+        # Pocas para suprimir, pero se apartaron del cálculo: queda registrado.
+        return Suppression("calidad_observada", 0.0,
+                           f"{malas} de {total} muestras de la ventana quedaron fuera del "
+                           f"cálculo por implausibilidad, sin alcanzar el umbral de supresión",
+                           tuple(citas[:8]))
     return Suppression("calidad", float(p["fuerza"]),
                        f"{malas} de {total} muestras de la ventana están fuera de "
                        f"rango de plausibilidad", tuple(citas[:8]))
@@ -481,7 +507,12 @@ def _explicacion(canales, k, risk, priority, supresiones, ms, confidence, cfg) -
     if ms > 0:
         partes.append(f"corroboración de laboratorio disponible ({ms:.0f} marcador/es)")
     for s in supresiones:
-        verbo = "prioridad acotada" if s.fuerza == 0 else f"puntaje reducido {s.fuerza:.0%}"
-        partes.append(f"{verbo} por {s.regla}: {s.motivo}")
+        if s.fuerza > 0:
+            verbo = f"supresión {s.regla}, puntaje reducido {s.fuerza:.0%}"
+        elif s.regla == "cobertura":
+            verbo = "supresión cobertura, prioridad acotada"
+        else:
+            verbo = f"evaluado sin suprimir ({s.regla})"
+        partes.append(f"{verbo}: {s.motivo}")
     partes.append(f"riesgo {risk:.2f}, confianza {confidence:.2f}, prioridad {priority}")
     return ". ".join(partes) + "."

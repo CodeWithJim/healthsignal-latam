@@ -58,8 +58,13 @@ class PatientTimeline:
 
         series: dict[str, Series] = {}
         for code, s in self._series.items():
-            mask = (s.available <= t64) & (s.times >= f64) & (s.times <= t64)
-            cut = s._take(mask)
+            # Primero el rango por tiempo de evento, que es contiguo porque la
+            # serie está ordenada; recién sobre esa porción se aplica el corte
+            # por disponibilidad, que no lo es.
+            sub = s.rango_por_evento(floor, T)
+            if not len(sub):
+                continue
+            cut = sub if bool((sub.available <= t64).all()) else sub._take(sub.available <= t64)
             if len(cut):
                 series[code] = cut
 

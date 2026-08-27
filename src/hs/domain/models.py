@@ -55,12 +55,30 @@ class Series:
             tuple(self.source_files[i] for i in idx), self.plausible[idx], self.unit,
         )
 
+    def contiguo(self, lo: int, hi: int) -> "Series":
+        """Rebanada contigua [lo, hi). O(k) en vez de O(n): las tuplas se cortan."""
+        return Series(
+            self.variable_code, self.times[lo:hi], self.available[lo:hi],
+            self.values[lo:hi], self.texts[lo:hi], self.record_ids[lo:hi],
+            self.source_files[lo:hi], self.plausible[lo:hi], self.unit,
+        )
+
+    def rango_por_evento(self, t0: dt.datetime, t1: dt.datetime) -> "Series":
+        """Recorte por tiempo de evento aprovechando que `times` está ordenado.
+
+        Con 144.000 evaluaciones, una máscara booleana sobre la serie completa
+        domina el costo; searchsorted la reduce a la porción que interesa.
+        """
+        lo = int(np.searchsorted(self.times, _as64(t0), side="left"))
+        hi = int(np.searchsorted(self.times, _as64(t1), side="right"))
+        return self.contiguo(lo, hi)
+
     def slice(self, t0: dt.datetime, t1: dt.datetime, *, inclusive: bool = True) -> "Series":
         """Recorta por tiempo de evento. `inclusive` incluye ambos extremos."""
+        if inclusive:
+            return self.rango_por_evento(t0, t1)
         a, b = _as64(t0), _as64(t1)
-        m = (self.times >= a) & (self.times <= b) if inclusive else \
-            (self.times > a) & (self.times <= b)
-        return self._take(m)
+        return self._take((self.times > a) & (self.times <= b))
 
     def usable(self) -> "Series":
         """Sólo muestras plausibles y numéricas: lo que puede entrar a un cálculo."""

@@ -88,6 +88,17 @@ prioridad:
 confianza:
   tau_frescura_min: 120.0
 
+# Evaluar no es emitir. Se emite en el primer ingreso a una banda o al escalar;
+# en la misma banda sólo tras el refractario y con incremento material (RF-11).
+eventizacion:
+  cadencia_min: 60
+  refractario_h: 12
+  delta_reemision: 0.10
+  emitir_desde: MEDIUM
+  # Una señal a la que la supresión le costó una banda se emite igual: es la
+  # demostración del control de falsas alertas, no ruido. El criterio es el
+  # cambio de banda, no un umbral aparte.
+
 # La cobertura NO multiplica el puntaje de riesgo. Un paciente que se desconecta
 # no está menos grave por estar desconectado: está peor observado. La cobertura
 # decide si un canal participa y alimenta confidence_score (P-06, RF-09).

@@ -38,6 +38,15 @@ versionan: pesan 244 MB y su integridad se verifica contra `MANIFEST_SHA256.txt`
 # Etapa 3 · un paciente recorrido a través del puerto as-of
 .venv\Scripts\python.exe scripts\01_snapshot.py PAT-0869 2026-07-20T18:00:00
 
+# Etapas 4-7 · barrido, eventización, exportación y auditoría   (~6 min)
+.venv\Scripts\python.exe scripts\02_detect.py
+
+# Métricas sin Gold Standard
+.venv\Scripts\python.exe scripts\03_metrics.py
+
+# Tabla de ablación
+.venv\Scripts\python.exe scripts\04_ablation.py --pacientes 300
+
 # Criterios de aceptación
 .venv\Scripts\python.exe -m pytest tests -q
 ```
@@ -69,9 +78,32 @@ por pruebas que intentan violarlas.
 |---|---|
 | **0 · RAW → CLEAN** | Completa. 17/17 hashes verificados, 2.549.046 filas clasificadas |
 | **1 · AsOfStore** | Completa. Puerto as-of y objetos de dominio |
-| **2 · Motor de concordancia** | Analizador validado contra CA-01…CA-06. 43 pruebas en verde. Falta la corrida sobre datos reales y la exportación |
-| 3 · Supresión, métricas, interfaz | Pendiente |
+| **2 · Motor de concordancia** | Completa. Barrido, eventización, exportación y métricas. `validate_submission.py` sin errores |
+| 3 · Interfaz de exploración | Pendiente |
 | 4 · Decisión en vivo y entregables | Pendiente |
+
+## Resultados sobre RISA Data V1.0
+
+Corrida completa: 95.731 evaluaciones sobre 1.000 pacientes en 6,2 minutos.
+
+```
+264 señales · 220 pacientes · 4.342 filas de evidencia (16,4 por señal)
+
+CRITICAL   24        HIGH   36        MEDIUM  197        LOW    7
+```
+
+| Criterio | Objetivo | Resultado |
+|---|---|---|
+| CE-01 · causalidad temporal | 100 % | **0 violaciones** en 4.342 filas |
+| CE-02 · cobertura de evidencia | 100 % | **0 señales sin evidencia** |
+| CE-03 · validador oficial | 0 errores | **VALID SUBMISSION FORMAT**, 0 warnings |
+| CE-04 · impacto en distractores | ≈ 0 | **0,0 %** (0 de 60 señales HIGH+) |
+| CE-05 · anticipación | > 2 h | **mediana 3,8 h** (p25 1,0 · p75 10,4) |
+| CE-07 · integración multifuente | ≥ 1 | **115 señales** con 3 fuentes distintas |
+| CE-08 · volumen | 10²–10³ | **264 señales** |
+
+Ninguna señal cita un `record_id` inexistente, y las cuatro auditorías corren
+sobre los CSV exportados, no sobre el motor que los produjo.
 
 ## Concordancia sobre magnitud, en números
 

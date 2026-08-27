@@ -120,6 +120,11 @@ CREATE TABLE IF NOT EXISTS signals (
     explanation       VARCHAR   NOT NULL,
     model_version     VARCHAR   NOT NULL,
     run_id            VARCHAR   NOT NULL,
+    -- Columnas propias. El validador oficial sólo exige que estén las
+    -- requeridas, así que las adicionales son legítimas y evitan que las
+    -- métricas tengan que leer la prosa de explanation.
+    k_concordantes    INTEGER,
+    suppressions      VARCHAR,
 
     CHECK (risk_score BETWEEN 0 AND 1),                                  -- RS-02
     CHECK (confidence_score IS NULL OR confidence_score BETWEEN 0 AND 1),
@@ -142,3 +147,7 @@ CREATE TABLE IF NOT EXISTS evidence (
 
     CHECK (evidence_role IN ('PRIMARY','SUPPORTING','CONTEXT','QUALITY'))
 );
+
+-- Migración para almacenes creados antes de las columnas propias.
+ALTER TABLE signals ADD COLUMN IF NOT EXISTS k_concordantes INTEGER;
+ALTER TABLE signals ADD COLUMN IF NOT EXISTS suppressions VARCHAR;

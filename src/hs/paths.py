@@ -17,6 +17,12 @@ MANIFEST = ROOT / "MANIFEST_SHA256.txt"
 MANIFEST_PREFIX = "01_RISA_DATA_V1_0/"
 
 
+def validador() -> Path | None:
+    """Ruta a validate_submission.py del kit oficial, esté donde esté."""
+    hits = sorted(ROOT.rglob("validate_submission.py"))
+    return hits[0] if hits else None
+
+
 def raw_path(source_file: str) -> Path:
     """'03_monitoring/vital_signs.csv' -> ruta absoluta en data/raw."""
     return RAW / source_file
