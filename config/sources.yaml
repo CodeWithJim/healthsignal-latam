@@ -1,0 +1,199 @@
+# Adaptadores declarativos de fuentes — RISA Data V1.0
+#
+# Incorporar una fuente nueva es agregar una entrada aquí, sin tocar el código
+# del pipeline (RF-01). Cada entrada declara de dónde sale el identificador
+# trazable, cuándo ocurrió el hecho y cuándo estuvo disponible (RD-02, RD-03).
+#
+# `replayable: true` significa que el origen puede volver a leerse, por lo que no
+# se aterriza copia en crudo: los CSV originales son la capa RAW (P-08).
+
+catalogs:
+  - {source_file: 05_metadata/variable_catalog.csv, table: variable_catalog}
+  - {source_file: 05_metadata/units_catalog.csv,    table: units_catalog}
+  - {source_file: 05_metadata/source_catalog.csv,   table: source_catalog}
+  - {source_file: 05_metadata/data_dictionary.csv,  table: data_dictionary}
+
+dimensions:
+  - {source_file: 01_master/patients.csv,             table: patients}
+  - {source_file: 01_master/devices.csv,              table: devices}
+  - {source_file: 01_master/healthcare_facilities.csv, table: healthcare_facilities}
+  - {source_file: 02_clinical/medications.csv,        table: medications}
+
+# ---------------------------------------------------------------------------
+# OBSERVACIONES — punto en el tiempo con valor
+# ---------------------------------------------------------------------------
+observations:
+
+  - source_file: 03_monitoring/vital_signs.csv
+    domain: VITAL
+    record_id: observation_id
+    patient: patient_id
+    encounter: encounter_id
+    device: device_id
+    event_time: timestamp
+    available_time: timestamp
+    available_note: >-
+      Regla oficial: la medición se considera disponible en su timestamp.
+      Las filas de MONITOR_RETRANSMIT reciben ajuste posterior (RD-05).
+    variable: variable_code
+    value: value
+    unit: unit
+    quality_flag: quality_flag
+    source_system: source_system
+    ref_low: null
+    ref_high: null
+    replayable: true
+
+  - source_file: 03_monitoring/wearable_observations.csv
+    domain: WEARABLE
+    record_id: wearable_observation_id
+    patient: patient_id
+    encounter: null
+    device: device_id
+    event_time: timestamp
+    available_time: sync_datetime
+    available_note: >-
+      Regla oficial: una observación no puede justificar una decisión anterior
+      a su sincronización. Latencia medida 0-30 min, mediana 4.
+    variable: variable_code
+    value: value
+    unit: unit
+    quality_flag: measurement_quality
+    source_system: null
+    ref_low: null
+    ref_high: null
+    replayable: true
+
+  - source_file: 03_monitoring/device_observations.csv
+    domain: DEVICE
+    record_id: device_observation_id
+    patient: patient_id
+    encounter: encounter_id
+    device: device_id
+    event_time: timestamp
+    available_time: timestamp
+    available_note: >-
+      Decisión del equipo: la tabla oficial no cubre esta fuente. Su único
+      source_system es MONITOR_GATEWAY, con latencia declarada NEAR_REAL_TIME
+      en source_catalog, por lo que se equipara a signos vitales.
+    variable: variable_code
+    value: value
+    unit: unit
+    quality_flag: null
+    source_system: source_system
+    ref_low: null
+    ref_high: null
+    replayable: true
+
+  - source_file: 02_clinical/laboratory_results.csv
+    domain: LAB
+    record_id: lab_result_id
+    patient: patient_id
+    encounter: encounter_id
+    device: null
+    event_time: sample_datetime
+    available_time: result_datetime
+    available_note: >-
+      Regla oficial: para decisión prospectiva manda result_datetime.
+      Latencia medida 30-360 min, mediana 133.
+    variable: test_code
+    value: result_value
+    unit: unit
+    quality_flag: quality_flag
+    source_system: source_system
+    ref_low: reference_low
+    ref_high: reference_high
+    replayable: true
+
+# ---------------------------------------------------------------------------
+# INTERVALOS — rango con estado
+# ---------------------------------------------------------------------------
+intervals:
+
+  - source_file: 04_context/patient_context.csv
+    kind: CONTEXT
+    record_id: context_id
+    patient: patient_id
+    device: null
+    start_time: start_datetime
+    end_time: end_datetime
+    available_time: start_datetime
+    available_note: >-
+      Regla oficial: intervalo observado, disponible desde su inicio.
+      Asociar por pertenencia temporal, no sólo por patient_id.
+    subtype: context_type
+    value_text: context_value
+    confidence: confidence
+    extra: []
+    replayable: true
+
+  - source_file: 04_context/connectivity_events.csv
+    kind: CONNECTIVITY
+    record_id: event_id
+    patient: patient_id
+    device: device_id
+    start_time: start_datetime
+    end_time: end_datetime
+    available_time: start_datetime
+    available_note: >-
+      Regla oficial: intervalo del evento. Nota RD-07 — device_id aquí es
+      100% wearable; la unión contra signos vitales va por patient_id.
+    subtype: connectivity_status
+    value_text: connectivity_status
+    confidence: null
+    extra: [delayed_records, packet_loss_estimate]
+    replayable: true
+
+  - source_file: 02_clinical/medication_administrations.csv
+    kind: MEDICATION
+    record_id: administration_id
+    patient: patient_id
+    device: null
+    start_time: start_datetime
+    end_time: end_datetime
+    available_time: start_datetime
+    available_note: >-
+      Decisión del equipo: la tabla oficial no cubre esta fuente. source_system
+      EHR_MED declara latencia LOW en source_catalog.
+    subtype: medication_id
+    value_text: administration_status
+    confidence: null
+    extra: [dose_value, dose_unit, encounter_id]
+    replayable: true
+
+  - source_file: 01_master/encounters.csv
+    kind: ENCOUNTER
+    record_id: encounter_id
+    patient: patient_id
+    device: null
+    start_time: start_datetime
+    end_time: end_datetime
+    available_time: start_datetime
+    available_note: >-
+      Decisión del equipo: la tabla oficial no cubre esta fuente. source_system
+      EHR_CORE declara latencia LOW. Delimita la ventana evaluable (RD-09).
+    subtype: encounter_type
+    value_text: care_setting
+    confidence: null
+    extra: [facility_id, reason_category, status]
+    replayable: true
+
+# ---------------------------------------------------------------------------
+# HECHOS CLÍNICOS — antecedentes
+# ---------------------------------------------------------------------------
+clinical_facts:
+
+  - source_file: 02_clinical/conditions.csv
+    record_id: condition_id
+    patient: patient_id
+    category: condition_category
+    onset: onset_date
+    available_time: recorded_datetime
+    available_note: >-
+      Regla oficial: conocer retrospectivamente el inicio no equivale a
+      disponer de la condición desde ese momento. Todas las fechas de registro
+      son anteriores al 2026-07-01.
+    status: status
+    severity: severity_context
+    source_system: source_system
+    replayable: true
