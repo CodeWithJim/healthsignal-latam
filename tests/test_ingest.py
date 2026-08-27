@@ -35,12 +35,27 @@ def one(con, sql, *args):
 # --------------------------------------------------------------- integridad
 
 def test_las_17_fuentes_coinciden_con_el_manifiesto(con):
-    """P-08 / RNF-04."""
-    total, ok = con.execute(
-        "SELECT count(*), count(*) FILTER (WHERE sha256_ok) FROM ingest_manifest"
-    ).fetchone()
+    """P-08 / RNF-04. Acotado a la última corrida: el registro es acumulativo."""
+    total, ok = con.execute("""
+        SELECT count(*), count(*) FILTER (WHERE sha256_ok) FROM ingest_manifest
+        WHERE run_id = (SELECT max(run_id) FROM ingest_manifest)
+    """).fetchone()
     assert total == 17, f"se esperaban 17 fuentes, hay {total}"
     assert ok == 17, f"{total - ok} archivos no coinciden con MANIFEST_SHA256.txt"
+
+
+def test_el_registro_de_ingestas_es_acumulativo(con):
+    """Sin historial no se puede saber si una fuente creció o si la editaron."""
+    corridas = con.execute(
+        "SELECT count(DISTINCT run_id) FROM ingest_manifest").fetchone()[0]
+    assert corridas >= 1
+    sin_estado = con.execute(
+        "SELECT count(*) FROM ingest_manifest WHERE estado IS NULL").fetchone()[0]
+    ultima = con.execute("""
+        SELECT count(*) FROM ingest_manifest
+        WHERE run_id = (SELECT max(run_id) FROM ingest_manifest) AND estado IS NOT NULL
+    """).fetchone()[0]
+    assert ultima == 17, "la última corrida debe registrar el veredicto de cada fuente"
 
 
 def test_invariante_de_clasificacion(con):
@@ -48,7 +63,8 @@ def test_invariante_de_clasificacion(con):
     malas = con.execute("""
         SELECT source_file, rows_read, rows_loaded, rows_quarantined
         FROM ingest_manifest
-        WHERE rows_read <> rows_loaded + rows_quarantined
+        WHERE run_id = (SELECT max(run_id) FROM ingest_manifest)
+          AND rows_read <> rows_loaded + rows_quarantined
     """).fetchall()
     assert malas == [], f"leídas != cargadas + cuarentena en: {malas}"
 
