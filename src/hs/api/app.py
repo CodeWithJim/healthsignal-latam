@@ -20,10 +20,12 @@ import duckdb
 import yaml
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse
+from pydantic import BaseModel
 
 from .. import paths
-from ..detect import EventConfig, signal_id
+from ..detect import EventConfig, HistoryAnalysis, analyze_history, signal_id
 from ..domain.scoring import Assessment, ScoringConfig, assess
+from ..narrative import narrate, narrate_history, narrative_status
 from ..timeline import AsOfStore
 
 _lock = threading.Lock()
@@ -38,6 +40,7 @@ async def _ciclo(_app: FastAPI):
     _estado.update(
         con=con, cfg=cfg, ev=EventConfig.from_dict(d),
         store=AsOfStore(con, lookback=cfg.evidencia + cfg.baseline),
+        narrative_enabled=narrative_status()["configured"],
         fuentes={r[0] for r in con.execute(
             "SELECT DISTINCT source_file FROM observations "
             "UNION SELECT DISTINCT source_file FROM intervals "
@@ -80,7 +83,30 @@ def health() -> dict:
     # Claves en ASCII: acentos en nombres de campo son legales pero frágiles
     # para clientes que no negocien la codificación correctamente.
     return {"ok": True, "signals": n, "observations": obs,
-            "model_version": _estado["cfg"].model_version}
+            "model_version": _estado["cfg"].model_version,
+            "narrative": narrative_status(_estado["narrative_enabled"])}
+
+
+class NarrativeSettings(BaseModel):
+    """Ajuste de ejecución; la clave permanece siempre en el servidor."""
+
+    enabled: bool
+
+
+@app.get("/narrative/settings", tags=["sistema"])
+def narrative_settings() -> dict:
+    """Estado público de la narrativa generativa, sin exponer la API key."""
+    return narrative_status(_estado["narrative_enabled"])
+
+
+@app.put("/narrative/settings", tags=["sistema"])
+def update_narrative_settings(settings: NarrativeSettings) -> dict:
+    """Activa o desactiva el uso de OpenAI durante la ejecución actual."""
+    status = narrative_status()
+    if settings.enabled and not status["configured"]:
+        raise HTTPException(409, "La clave de OpenAI no está configurada en el servidor")
+    _estado["narrative_enabled"] = settings.enabled
+    return narrative_status(_estado["narrative_enabled"])
 
 
 # --------------------------------------------------------------------------- señales
@@ -166,7 +192,7 @@ def timeline(
 
     filas = _dicts(f"""
         SELECT variable_code, event_time, available_time, value_num, value_text,
-               unit_canonical, record_id, is_plausible, quality_flag
+               unit_canonical, record_id, is_plausible, quality_flag, ref_low, ref_high
         FROM observations WHERE {' AND '.join(cond)} ORDER BY variable_code, event_time
     """, params)
     series: dict[str, list] = {}
@@ -219,10 +245,39 @@ def _serializar(a: Assessment) -> dict:
     }
 
 
+def _serializar_historia(h: HistoryAnalysis) -> dict:
+    """Contrato longitudinal: estado al cierre y máximo histórico separados."""
+    r = _serializar(h.current)
+    r.update({
+        "analysis_scope": "longitudinal_history",
+        "history_start": h.start,
+        "history_end": h.end,
+        "first_evaluable_at": h.first_evaluable_at,
+        "evaluations_count": len(h.assessments),
+        "skipped_without_baseline": h.skipped_without_baseline,
+        "priority_counts": dict(h.priority_counts),
+        "priority_transitions": [
+            {"at": t.at, "priority_level": t.priority, "risk_score": round(t.risk, 4)}
+            for t in h.transitions
+        ],
+        "risk_trajectory": [
+            {"at": a.T, "risk_score": round(a.risk, 4),
+             "priority_level": a.priority, "k_concordantes": a.k}
+            for a in h.assessments
+        ],
+        "historical_peak": _serializar(h.peak),
+    })
+    return r
+
+
 @app.get("/decide", tags=["decisión"])
 def decidir(
     patient: str = Query(..., description="p.ej. PAT-0869"),
     at: dt.datetime = Query(..., description="instante de decisión, p.ej. 2026-07-20T18:00:00"),
+    narrative: bool = Query(
+        False,
+        description="añade una síntesis fundamentada para revisión profesional",
+    ),
 ) -> dict:
     """Computa una decisión en vivo, en el instante que se pida.
 
@@ -242,6 +297,55 @@ def decidir(
     r["observaciones_visibles"] = snap.n_observations()
     r["apartadas"] = [{"record_id": x.record_id, "motivo": x.reason,
                        "variable_code": x.variable_code} for x in snap.excluded]
+    if narrative:
+        # Capa posterior al dictamen: no puede modificar risk, priority ni citas.
+        r["narrative"] = narrate(a, use_openai=_estado["narrative_enabled"])
+    return r
+
+
+@app.get("/patients/{pid}/history-analysis", tags=["decisión"])
+def analizar_historia(
+    pid: str,
+    hasta: dt.datetime | None = Query(
+        None, description="corte opcional; sin valor analiza el encuentro completo",
+    ),
+    narrative: bool = Query(
+        False, description="añade una síntesis del período completo",
+    ),
+) -> dict:
+    """Analiza toda la historia hasta un corte o el encuentro completo.
+
+    La salida no confunde el máximo histórico con el estado al cierre. Cada
+    evaluación interna conserva la garantía as-of de `/decide`.
+    """
+    if not _q("SELECT 1 FROM patients WHERE patient_id = ?", [pid]):
+        raise HTTPException(404, f"paciente desconocido: {pid}")
+
+    store: AsOfStore = _estado["store"]
+    cfg: ScoringConfig = _estado["cfg"]
+    with _lock:
+        encounter = store.encounter_window(pid)
+        if encounter is None:
+            raise HTTPException(422, "el paciente no tiene un encuentro analizable")
+        start, encounter_end = encounter
+        end = hasta or encounter_end
+        if end < start or end > encounter_end:
+            raise HTTPException(
+                422,
+                f"el corte debe estar dentro del encuentro: {start.isoformat()} a "
+                f"{encounter_end.isoformat()}",
+            )
+        # Se trae una sola vez. Cada `timeline.at(T)` vuelve a cortar por
+        # disponibilidad, de modo que una evaluación temprana no ve el futuro.
+        patient_timeline = store.timeline(pid)
+        history = analyze_history(patient_timeline, start, end, cfg)
+
+    r = _serializar_historia(history)
+    r["history_mode"] = "until" if hasta is not None else "complete"
+    if narrative:
+        r["narrative"] = narrate_history(
+            history, use_openai=_estado["narrative_enabled"],
+        )
     return r
 
 

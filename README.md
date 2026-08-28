@@ -17,7 +17,7 @@ profesional.
 | **Validador oficial** | `VALID SUBMISSION FORMAT` · 0 errores · 0 warnings |
 | **Causalidad temporal** | 0 violaciones en 3.405 filas de evidencia |
 | **Anticipación** | mediana 4,0 h antes del máximo posterior |
-| **Código** | 3.199 líneas de Python · 27 archivos · 64 pruebas |
+| **Código** | Python + HTML/JS · 84 pruebas automatizadas |
 
 ---
 
@@ -76,6 +76,7 @@ Cada carpeta corresponde a una posición en el diagrama de arriba:
 |---|---|
 | `src/hs/domain/` | **Núcleo.** `models.py` y `scoring.py`: funciones puras, sin IO ni SQL |
 | `src/hs/timeline/` | **El puerto as-of.** `AsOfStore` — única vía de lectura del núcleo |
+| `src/hs/narrative/` | Narrativa opcional con OpenAI, posterior al dictamen y con fallback local |
 | `src/hs/ingest.py` · `manifest.py` · `schema.sql` | Adaptador de entrada: RAW → CLEAN, hashes y restricciones |
 | `src/hs/detect/` | Caso de uso: recorre la grilla, cruza el puerto, eventiza |
 | `src/hs/export/` · `src/hs/api/` | Adaptadores de salida: CSV de entrega y HTTP |
@@ -103,8 +104,9 @@ pruebas que intentan violar ambas y esperan la excepción.
 | Almacén analítico | **DuckDB 1.5** | Archivo único sin servidor; columnar; lee y escribe Parquet; el contrato de salida se expresa como constraints |
 | Cálculo | **NumPy 2.4** | Series vectorizadas con procedencia por muestra en el mismo índice |
 | API | **FastAPI 0.141** | Tipado, OpenAPI automática, latencia adecuada para decisión en vivo |
+| Narrativa | **OpenAI GPT-5.6 Terra** | Traduce el dictamen estructurado a lenguaje humano sin decidir riesgo ni prioridad |
 | Interfaz | HTML + JS sin dependencias | Lo que se evalúa es la utilidad, no el framework |
-| Pruebas | **pytest 9.1** | 64 pruebas, incluida la ejecución del validador oficial |
+| Pruebas | **pytest 9.1** | 84 pruebas automatizadas, incluida la ejecución del validador oficial |
 
 **Sin Polars, sin pandas.** El plan inicial incluía Polars por `join_asof` y tipado estricto, pero
 la ingesta se resolvió en SQL sobre DuckDB, que ya aporta ambas cosas. Agregar una dependencia que
@@ -141,7 +143,8 @@ es `ingest_manifest`, que es el registro de qué se cargó y cuándo.
 ## 5 · Dependencias principales
 
 `duckdb 1.5.5` · `numpy 2.4.6` · `PyYAML 6.0.3` · `fastapi 0.141.1` · `uvicorn 0.52.4` ·
-`pytest 9.1.1` · `httpx 0.28.1`. Versiones fijadas en [`requirements.txt`](requirements.txt).
+`pytest 9.1.1` · `httpx 0.28.1` · `openai 3.5.0` · `python-dotenv 1.2.3`. Versiones fijadas en
+[`requirements.txt`](requirements.txt).
 
 ## 6 · Reproducir la demostración
 
@@ -159,16 +162,62 @@ es `ingest_manifest`, que es el registro de qué se cargó y cuándo.
 .venv\Scripts\python.exe scripts\05_serve.py
 ```
 
+La interfaz siempre muestra una lectura humana fundamentada. La ubicación exacta para la clave es
+`D:\Dev\HackatonIA2026Claude\.env`. Crear el archivo a partir de la plantilla y editar solamente
+`OPENAI_API_KEY`:
+
+```powershell
+if (-not (Test-Path .env)) { Copy-Item .env.example .env }
+# Abrir .env y reemplazar: OPENAI_API_KEY=pega_aqui_tu_clave_de_openai
+.venv\Scripts\python.exe scripts\05_serve.py
+```
+
+`OPENAI_MODEL=gpt-5.6-terra` ya está configurado como valor predeterminado. La variable sólo es
+necesaria en `.env` si se quiere probar otro modelo. El prompt predeterminado está en
+`src/hs/narrative/service.py`, constante `DEFAULT_PROMPT`; exige una explicación breve de qué ocurre,
+qué revisar y qué registros sustentan el texto, sin diagnóstico ni recomendaciones terapéuticas.
+
+Sin clave —o si el servicio externo falla— se utiliza automáticamente una narrativa local basada en
+los mismos datos reales. El cálculo de riesgo y prioridad no depende de OpenAI.
+
+Con la aplicación en marcha, el interruptor **IA** en el encabezado permite activar o desactivar
+OpenAI sin reiniciar el servidor. Al desactivarlo, las consultas nuevas usan el resumen local y no
+consumen la API; la clave nunca se envía al navegador. El ajuste dura mientras el servidor está
+encendido y vuelve al valor inicial configurado al reiniciarlo.
+
 ### Decisión en un instante arbitrario
 
 ```
-GET /decide?patient=PAT-0869&at=2026-07-20T18:00:00
+GET /decide?patient=PAT-0869&at=2026-07-20T18:00:00&narrative=true
 ```
 
 El evaluador elige **cualquier paciente y cualquier instante** y el motor computa en el momento,
 usando exclusivamente evidencia con `available_time <= at`. Devuelve puntaje, prioridad,
 confianza, la contribución de cada canal con su baseline, las reglas evaluadas con su cita, y las
-filas fuente exactas. **Nada precargado.**
+filas fuente exactas. Con `narrative=true`, añade una síntesis generada que indica qué muestran los
+datos y qué aspectos ameritan revisión. Los valores, la prioridad y las referencias permanecen
+deterministas y separados del texto generado. **Nada precargado.**
+
+### Historia hasta un corte o encuentro completo
+
+```text
+GET /patients/PAT-0002/history-analysis?hasta=2026-07-13T12:20:00&narrative=true
+GET /patients/PAT-0869/history-analysis?narrative=true
+```
+
+Con `hasta`, el motor recorre el encuentro desde su inicio hasta ese corte. Sin `hasta`, analiza
+el encuentro completo. Cada punto se vuelve a evaluar con la misma garantía causal de `/decide`:
+una evaluación interna en `T` nunca observa registros disponibles después de `T`.
+
+La respuesta mantiene separados dos resultados que no son intercambiables:
+
+- **Estado al cierre:** decisión puntual exactamente en el final solicitado.
+- **Máxima prioridad histórica:** peor episodio encontrado al recorrer el período cada 20 minutos.
+
+Por eso una historia puede contener un episodio `CRITICAL` y cerrar en `LOW`; la aplicación no
+presenta un episodio pasado como si fuera el estado final. La interfaz grafica todo el historial
+disponible hasta el corte, muestra los seis canales aunque su contribución sea cero, incorpora los
+laboratorios disponibles y sombrea las seis horas que sustentan el episodio máximo.
 
 Desde `/source-row?source_file=…&record_id=…` se llega a la fila tal cual está en el CSV original.
 `source_file` se valida contra la lista de fuentes cargadas: la ruta nunca se construye con texto
@@ -176,9 +225,9 @@ libre del pedido.
 
 ### Auditar una señal
 
-La interfaz muestra el ranking, el timeline de los canales con la ventana de evidencia sombreada,
-la tabla de contribuciones por canal con su baseline, y la evidencia agrupada por rol con cada
-`record_id` enlazado a su fila original en RISA.
+La interfaz muestra el ranking, el historial completo de los canales, la evolución del riesgo, la
+ventana del episodio máximo sombreada, la tabla de contribuciones de ese episodio y la evidencia
+agrupada por rol con cada `record_id` enlazado a su fila original en RISA.
 
 ## 7 · Mecanismo de análisis y priorización
 
