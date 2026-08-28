@@ -21,11 +21,14 @@ flowchart TD
 
     DOM["<b>NÚCLEO DE DOMINIO</b> · funciones puras · sin IO<br>baseline propio → 3 medidas por canal → concordancia<br>→ corroboración multifuente → supresión → prioridad"]
 
-    EVT["<b>EVENTIZACIÓN</b><br>evaluar no es emitir<br>95.731 evaluaciones → 264 señales"]
+    HIST["<b>ANÁLISIS LONGITUDINAL</b><br>Assessment cada 20 min · causal en cada punto<br>estado al cierre ≠ máximo histórico"]
+
+    EVT["<b>EVENTIZACIÓN</b><br>evaluar no es emitir<br>95.731 evaluaciones → 210 señales"]
     RES[("<b>RESULTS</b> · DuckDB<br>signals ← FK ─ evidence<br>contrato del validador como constraints")]
 
     CSV["<b>results/</b><br>signals.csv · evidence.csv"]
-    API["<b>API + UI</b><br>/decide · /signals · /source-row"]
+    API["<b>API + UI</b><br>/decide · /history-analysis · /signals · /source-row"]
+    NAR["<b>NARRATIVA FUNDAMENTADA</b><br>OpenAI opcional · JSON validado<br>fallback local · no modifica el dictamen"]
     AUD["<b>AUDITORÍA</b><br>validate_submission.py<br>causalidad · huérfanas · trazabilidad"]
 
     RAW -->|"SHA-256 vs MANIFEST"| ING
@@ -33,9 +36,14 @@ flowchart TD
     CLEAN --> PORT
     PORT -->|"PatientSnapshot"| DOM
     DOM -->|"Assessment"| EVT
+    DOM -->|"secuencia de Assessment"| HIST
     EVT --> RES
     RES --> CSV
     RES --> API
+    HIST --> API
+    HIST -->|"resumen longitudinal estructurado"| NAR
+    DOM -->|"Assessment estructurado"| NAR
+    NAR -->|"síntesis para revisión"| API
     CSV --> AUD
     CLEAN -.->|"fila original"| API
 
@@ -45,8 +53,9 @@ flowchart TD
 ```
 
 **Vectorizado abajo, dominio arriba.** Las capas de volumen se resuelven en SQL sobre DuckDB;
-el núcleo que decide es Python puro sin IO. La frontera se cruza una sola vez, por paciente y
-por instante de decisión.
+el núcleo que decide es Python puro sin IO. La frontera se cruza por paciente y por instante de
+decisión; el análisis longitudinal repite ese mismo corte causal y resume el período sin cambiar
+la semántica de cada decisión puntual.
 
 ---
 
@@ -208,21 +217,22 @@ decisión, y las decisiones no se toman en silencio.
 
 ## 6. Correspondencia entre diagrama y código
 
-| Componente del diagrama | Archivo | Líneas | Pruebas que lo cubren |
-|---|---|---|---|
-| INGEST · adaptadores | `config/sources.yaml` + `src/hs/ingest.py` | 324 | `test_ingest.py` (18) |
-| Verificación SHA-256 | `src/hs/manifest.py` | 70 | `test_ingest.py` |
-| CLEAN · esquema y restricciones | `src/hs/schema.sql` | 136 | `test_ingest.py`, `test_no_leakage.py` |
-| **AsOfStore** · el puerto | `src/hs/timeline/store.py` | 188 | `test_no_leakage.py` (11) |
-| Objetos de dominio | `src/hs/domain/models.py` | 229 | `test_no_leakage.py` |
-| **Analizador** | `src/hs/domain/scoring.py` | 430 | `test_trajectories.py` (14) |
-| Eventización | `src/hs/detect/runner.py` | 131 | `test_contract.py` |
-| Exportación y auditoría | `src/hs/export/writer.py` | 80 | `test_contract.py` (11) |
-| API y trazabilidad | `src/hs/api/app.py` | 235 | `test_api.py` (10) |
-| Interfaz | `ui/index.html` | 251 | — |
+| Componente del diagrama | Archivo | Pruebas que lo cubren |
+|---|---|---|
+| INGEST · adaptadores | `config/sources.yaml` + `src/hs/ingest.py` | `test_ingest.py` |
+| Verificación SHA-256 | `src/hs/manifest.py` | `test_ingest.py` |
+| CLEAN · esquema y restricciones | `src/hs/schema.sql` | `test_ingest.py`, `test_no_leakage.py` |
+| **AsOfStore** · el puerto | `src/hs/timeline/store.py` | `test_no_leakage.py` |
+| Objetos de dominio | `src/hs/domain/models.py` | `test_no_leakage.py` |
+| **Analizador puntual** | `src/hs/domain/scoring.py` | `test_trajectories.py` |
+| **Análisis longitudinal** | `src/hs/detect/history.py` | `test_api.py`, `test_narrative.py` |
+| Narrativa fundamentada | `src/hs/narrative/service.py` | `test_narrative.py` |
+| Eventización | `src/hs/detect/runner.py` | `test_contract.py` |
+| Exportación y auditoría | `src/hs/export/writer.py` | `test_contract.py` |
+| API y trazabilidad | `src/hs/api/app.py` | `test_api.py` |
+| Interfaz | `ui/index.html` | verificación local de los dos modos temporales |
 
-**3.199 líneas de Python en 27 archivos · 64 pruebas.** Cada caja del diagrama existe como
-código ejecutable; ninguna representa trabajo futuro.
+Cada caja del diagrama existe como código ejecutable; ninguna representa trabajo futuro.
 
 ---
 
@@ -233,7 +243,7 @@ código ejecutable; ninguna representa trabajo futuro.
 | Datos originales | Sólo lectura. Hash verificado en cada corrida; una discrepancia detiene el proceso |
 | Acceso a la base | La API abre DuckDB en modo `read_only`; no expone SQL arbitrario |
 | Trazabilidad de rutas | `source_file` se valida contra la lista de fuentes cargadas: la ruta nunca se construye con texto libre del pedido. Probado con travesía de directorios |
-| Credenciales | Ninguna. El sistema opera exclusivamente sobre los datos suministrados |
+| Credenciales | `OPENAI_API_KEY` en `.env`, sólo en el backend y sólo para narrativa; nunca llega a la UI ni altera el dictamen |
 | Separación de componentes | Ingesta, decisión y consulta son procesos distintos sobre el mismo almacén |
 | Minimización | La API expone resultados y procedencia, no volcados de la cohorte |
 
@@ -249,8 +259,9 @@ confianza en vez de fabricar riesgo. Incorporar una fuente nueva es agregar una 
 Para que el diagrama corresponda al prototipo, conviene decir también qué no hay:
 
 - **No hay modelo entrenado.** No existen etiquetas públicas; el Gold Standard es privado.
-- **No hay componente generativo en la ruta de decisión.** Ningún modelo interviene en el
-  cálculo de puntaje, la asignación de prioridad ni la selección de evidencia.
+- **No hay componente generativo en la ruta de decisión.** OpenAI actúa después del `Assessment`
+  para redactar una síntesis opcional. Ningún modelo interviene en el cálculo de puntaje, la
+  asignación de prioridad ni la selección de evidencia; cualquier falla usa un fallback local.
 - **No hay streaming ni procesamiento distribuido.** El dataset es estático y congelado.
 - **No hay autenticación de usuarios.** La API es local y de sólo lectura; en un despliegue real
   haría falta control de acceso por rol.

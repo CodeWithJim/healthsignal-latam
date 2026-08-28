@@ -44,6 +44,35 @@ def test_decide_en_un_instante_arbitrario(client):
     assert d["explanation"]
 
 
+def test_decide_puede_incluir_lectura_para_revision(client, monkeypatch):
+    """La UI pide la narrativa explicitamente; el endpoint base sigue determinista."""
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    r = client.get("/decide", params={"patient": "PAT-0869",
+                                      "at": "2026-07-20T18:00:00",
+                                      "narrative": "true"})
+    assert r.status_code == 200
+    n = r.json()["narrative"]
+    assert n["source"] == "deterministic_fallback"
+    assert n["summary"] and len(n["review_points"]) >= 2
+    assert n["findings"]
+
+
+def test_flag_de_ia_desde_la_api_usa_fallback_y_no_expone_clave(client):
+    anterior = client.get("/narrative/settings").json()
+    try:
+        r = client.put("/narrative/settings", json={"enabled": False})
+        assert r.status_code == 200
+        assert r.json()["enabled"] is False
+        assert "api_key" not in r.text.lower()
+
+        d = client.get("/decide", params={"patient": "PAT-0869",
+                                           "at": "2026-07-20T18:00:00",
+                                           "narrative": "true"}).json()
+        assert d["narrative"]["source"] == "deterministic_fallback"
+    finally:
+        client.put("/narrative/settings", json={"enabled": anterior["enabled"]})
+
+
 def test_decide_respeta_la_causalidad(client):
     """Toda la evidencia devuelta estaba disponible en el instante pedido."""
     at = dt.datetime(2026, 7, 20, 18, 0, 0)
@@ -73,6 +102,46 @@ def test_decide_es_reproducible(client):
 def test_decide_rechaza_paciente_inexistente(client):
     assert client.get("/decide", params={"patient": "PAT-9999",
                                          "at": "2026-07-20T18:00:00"}).status_code == 404
+
+
+def test_historia_hasta_un_corte_recorre_el_periodo_y_conserva_causalidad(client):
+    hasta = dt.datetime(2026, 7, 13, 12, 20)
+    r = client.get(
+        "/patients/PAT-0002/history-analysis",
+        params={"hasta": hasta.isoformat()},
+    )
+    assert r.status_code == 200, r.text
+    d = r.json()
+    assert d["history_mode"] == "until"
+    assert dt.datetime.fromisoformat(d["history_end"]) == hasta
+    assert dt.datetime.fromisoformat(d["decision_datetime"]) == hasta
+    assert d["evaluations_count"] == sum(d["priority_counts"].values())
+    assert all(dt.datetime.fromisoformat(p["at"]) <= hasta for p in d["risk_trajectory"])
+    assert dt.datetime.fromisoformat(d["historical_peak"]["decision_datetime"]) <= hasta
+    for assessment in (d, d["historical_peak"]):
+        for evidence in assessment["evidencia"]:
+            assert dt.datetime.fromisoformat(evidence["available_datetime"]) <= dt.datetime.fromisoformat(
+                assessment["decision_datetime"]
+            )
+
+
+def test_historia_completa_distingue_maximo_historico_del_estado_final(client):
+    """Un CRITICAL pasado no convierte el cierre recuperado en CRITICAL."""
+    r = client.get("/patients/PAT-0869/history-analysis")
+    assert r.status_code == 200, r.text
+    d = r.json()
+    assert d["history_mode"] == "complete"
+    assert d["historical_peak"]["priority_level"] == "CRITICAL"
+    assert d["priority_level"] == "LOW"
+    assert d["historical_peak"]["risk_score"] > d["risk_score"]
+
+
+def test_historia_rechaza_corte_fuera_del_encuentro(client):
+    r = client.get(
+        "/patients/PAT-0002/history-analysis",
+        params={"hasta": "2026-07-21T12:20:00"},
+    )
+    assert r.status_code == 422
 
 
 def test_señales_y_evidencia_por_rol(client):

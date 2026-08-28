@@ -25,3 +25,8 @@ venv/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# --- Secretos locales ---
+.env
+.env.*
+!.env.example
